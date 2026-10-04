@@ -42,7 +42,7 @@ use crate::{
     },
     views::{
         create_card::{CreateCardEvent, CreateCardModal},
-        icon_button,
+        icon_button, page_header,
     },
 };
 
@@ -675,7 +675,7 @@ impl KanbanView {
             title_row = title_row.child(
                 div()
                     .flex_shrink_0()
-                    .rounded(px(4.))
+                    .rounded(cx.theme().radius)
                     .bg(cx.theme().background)
                     .px_1()
                     .text_xs()
@@ -744,7 +744,7 @@ impl KanbanView {
             meta = meta.child(
                 div()
                     .flex_shrink_0()
-                    .rounded(px(4.))
+                    .rounded(cx.theme().radius)
                     .bg(cx.theme().warning.opacity(0.15))
                     .px_1()
                     .text_xs()
@@ -761,9 +761,19 @@ impl KanbanView {
             } else {
                 (cx.theme().muted_foreground, cx.theme().background)
             };
-            shell = shell.child(div().rounded(px(6.)).px_2().py_1().bg(background).child(
-                self.collapsible_text(&format!("{}:note", card.id), note.clone(), color, cx),
-            ));
+            shell = shell.child(
+                div()
+                    .rounded(cx.theme().radius)
+                    .px_2()
+                    .py_1()
+                    .bg(background)
+                    .child(self.collapsible_text(
+                        &format!("{}:note", card.id),
+                        note.clone(),
+                        color,
+                        cx,
+                    )),
+            );
         }
 
         // 操作行：默认隐身，悬停到这张卡片才显形——一屏同时挂十几个删除按钮太吵。
@@ -834,7 +844,7 @@ impl KanbanView {
                 div()
                     .w(px(8.))
                     .h(px(8.))
-                    .rounded(px(4.))
+                    .rounded(cx.theme().radius_full())
                     .bg(column_tone(column, cx.theme())),
             )
             .child(div().text_sm().child(column_label(column)))
@@ -1190,25 +1200,25 @@ impl Render for KanbanView {
             })
             .collect();
 
-        let mut header = h_flex()
-            .flex_shrink_0()
-            .items_center()
-            .gap_2()
-            .px_4()
-            .py_2()
-            .border_b_1()
-            .border_color(cx.theme().border);
+        let mut header = page_header(cx);
         // 侧边栏收起时给一条回到它的路（前端同样只在收起时显示这枚按钮）。
         if !self.sidebar_open {
             header = header.child(icon_button(
                 "kanban-expand-sidebar",
                 IconName::Sidebar,
+                "展开侧边栏",
                 cx,
                 |_this: &mut KanbanView, cx| cx.emit(KanbanEvent::ToggleSidebar),
             ));
         }
         header = header
-            .child(div().text_sm().child("看板"))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("看板"),
+            )
             .child(badge(format!("{} 张卡片", self.cards.len()), cx.theme()));
         if running > 0 {
             header = header.child(badge(format!("{running} 张执行中"), cx.theme()));
@@ -1251,11 +1261,14 @@ impl Render for KanbanView {
             page = page.child(
                 div()
                     .flex_shrink_0()
-                    .mx_4()
+                    .mx_6()
                     .my_2()
                     .px_3()
                     .py_2()
                     .rounded(cx.theme().radius)
+                    .border_1()
+                    .border_color(cx.theme().danger.opacity(0.3))
+                    .bg(cx.theme().danger.opacity(0.15))
                     .text_xs()
                     .text_color(cx.theme().danger)
                     .child(error.clone()),
@@ -1264,11 +1277,14 @@ impl Render for KanbanView {
             page = page.child(
                 div()
                     .flex_shrink_0()
-                    .mx_4()
+                    .mx_6()
                     .my_2()
                     .px_3()
                     .py_2()
                     .rounded(cx.theme().radius)
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().group_box)
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
                     .child("还没有卡片。点右上角「新建卡片」写下第一条需求。"),
@@ -1283,7 +1299,7 @@ impl Render for KanbanView {
                 .min_h_0()
                 .items_stretch()
                 .gap_4()
-                .px_4()
+                .px_6()
                 .py_2()
                 .child(
                     v_flex()
@@ -1429,7 +1445,7 @@ fn badge(text: impl Into<SharedString>, theme: &Theme) -> AnyElement {
     div()
         .flex_shrink_0()
         .px_2()
-        .rounded(px(8.))
+        .rounded(theme.radius)
         .bg(theme.muted)
         .text_xs()
         .text_color(theme.muted_foreground)

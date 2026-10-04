@@ -249,6 +249,7 @@ impl CreateCardModal {
                     .child(icon_button(
                         "kanban-card-close",
                         IconName::Close,
+                        "关闭",
                         cx,
                         |this: &mut Self, cx| this.cancel(cx),
                     )),
@@ -370,7 +371,7 @@ impl Render for CreateCardModal {
                     .id("kanban-card")
                     .w_full()
                     .max_w(px(if picker_open { PICKER_WIDTH } else { MODAL_WIDTH }))
-                    .rounded(cx.theme().radius)
+                    .rounded(cx.theme().radius_lg)
                     .border_1()
                     .border_color(cx.theme().border)
                     .bg(cx.theme().popover)

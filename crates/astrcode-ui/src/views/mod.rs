@@ -12,10 +12,12 @@ pub mod sidebar;
 
 use astrcode_protocol::http::SessionListItemDto;
 use gpui_kit::{
-    AnyElement, Context, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _,
-    component::{ActiveTheme as _, Size},
-    div, px,
+    AnyElement, App, Context, IntoElement, Styled as _,
+    component::{
+        ActiveTheme as _, Size,
+        button::{Button, ButtonVariants as _},
+        h_flex,
+    },
 };
 
 use crate::icons::IconName;
@@ -46,27 +48,36 @@ pub(crate) fn display_title(item: &SessionListItemDto) -> String {
         .unwrap_or_else(|| item.session_id.clone())
 }
 
-/// 页头与页脚的小图标按钮：32px 见方，悬停只换底色（前端是 `h-8 w-8 rounded-lg`）。
+/// 页头的共用几何：四个区域同高，跨页切换时那条底边才停在同一像素上。
 ///
-/// 悬停不换图标颜色：这版 gpui 没有 `group_hover`，子元素的颜色取不到父元素的悬停态。
+/// 横向内缩按主区的档给（`px_6`），侧边栏是导航列、窄一档，自己再盖一层。底边也归它画：
+/// 相邻两层各画一条是同一条线画两遍。
+pub(crate) fn page_header(cx: &App) -> gpui_kit::Div {
+    h_flex()
+        .flex_shrink_0()
+        .items_center()
+        .gap_2()
+        .px_6()
+        .h_12()
+        .border_b_1()
+        .border_color(cx.theme().border)
+}
+
+/// 页头与页脚的小图标按钮：没有可见文字，因此必须带一个可访问名——它同时就是悬停提示。
+///
+/// 走框架的 `Button` 而不是自绘的 div：图标按钮语义上仍是按钮，焦点环、按下态、提示浮层
+/// 都该由它管；自绘版这三样一样都没有。
 pub(crate) fn icon_button<T: 'static>(
     id: &'static str,
     icon: IconName,
+    label: &'static str,
     cx: &mut Context<T>,
     on_click: impl Fn(&mut T, &mut Context<T>) + 'static,
 ) -> AnyElement {
-    let hover_background = cx.theme().list_hover;
-    div()
-        .id(id)
-        .flex()
-        .flex_shrink_0()
-        .items_center()
-        .justify_center()
-        .size(px(32.0))
-        .rounded(cx.theme().radius)
-        .text_color(cx.theme().muted_foreground)
-        .hover(move |this| this.bg(hover_background))
+    Button::new(id)
+        .ghost()
+        .icon(icon.element(Size::Small))
+        .tooltip(label)
         .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
-        .child(icon.element(Size::Small))
         .into_any_element()
 }

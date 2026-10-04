@@ -201,6 +201,7 @@ impl NewProjectModal {
                     .child(icon_button(
                         "new-project-close",
                         IconName::Close,
+                        "关闭",
                         cx,
                         |this: &mut Self, cx| this.cancel(cx),
                     )),

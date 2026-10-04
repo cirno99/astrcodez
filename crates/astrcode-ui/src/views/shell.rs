@@ -9,7 +9,9 @@ use astrcode_protocol::http::{SessionListItemDto, UiPreferencesResponseDto};
 use gpui_kit::{
     AppContext as _, AsyncApp, Context, Entity, InteractiveElement as _, IntoElement, MouseButton,
     MouseDownEvent, MouseMoveEvent, ParentElement as _, Render, Styled as _, Subscription, Task,
-    Window, component::h_flex, div, px,
+    Window,
+    component::{ActiveTheme as _, h_flex},
+    div, px,
 };
 
 use super::{
@@ -701,6 +703,26 @@ impl Render for Shell {
             );
         // 收起时不画侧边栏，也不画那条把手：两者是一件事的两个部分。
         if self.sidebar_open {
+            // 把手只有 4px 宽，自己不画任何东西：悬停或拖拽时给它一条底色，
+            // 否则这条可拖拽的分隔线在界面上完全看不出来。
+            let handle_tint = cx.theme().accent;
+            let mut handle = div()
+                .id("sidebar-resize")
+                .w(px(SIDEBAR_HANDLE_WIDTH))
+                .h_full()
+                .flex_shrink_0()
+                .hover(move |style| style.bg(handle_tint))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                        this.drag_origin = Some((f32::from(event.position.x), this.sidebar_width));
+                        cx.notify();
+                    }),
+                );
+            // 拖快了指针会跑出这 4px，松手之前那条底色不能跟着消失。
+            if self.drag_origin.is_some() {
+                handle = handle.bg(handle_tint);
+            }
             root = root
                 .child(
                     div()
@@ -709,21 +731,7 @@ impl Render for Shell {
                         .flex_shrink_0()
                         .child(self.sidebar.clone()),
                 )
-                .child(
-                    div()
-                        .id("sidebar-resize")
-                        .w(px(SIDEBAR_HANDLE_WIDTH))
-                        .h_full()
-                        .flex_shrink_0()
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                                this.drag_origin =
-                                    Some((f32::from(event.position.x), this.sidebar_width));
-                                cx.notify();
-                            }),
-                        ),
-                );
+                .child(handle);
         }
         root = root.child(div().flex_1().min_w_0().h_full().child(main));
         // 弹窗铺满整层，画在最后因此盖住其余部分。

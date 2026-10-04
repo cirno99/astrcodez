@@ -293,7 +293,7 @@ impl ProjectPathField {
             .mt_1()
             .max_h(px(CANDIDATE_PANEL_MAX_HEIGHT))
             .overflow_y_scroll()
-            .rounded(cx.theme().radius)
+            .rounded(cx.theme().radius_lg)
             .border_1()
             .border_color(cx.theme().border)
             .bg(cx.theme().popover)
@@ -503,6 +503,7 @@ impl ProjectPathField {
                     .child(icon_button(
                         "picker-close",
                         IconName::Close,
+                        "关闭",
                         cx,
                         |this: &mut Self, cx| this.picker_cancel(cx),
                     )),

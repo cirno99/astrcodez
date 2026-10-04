@@ -17,7 +17,7 @@ use gpui_kit::{
     div, px, radians,
 };
 
-use super::{MainView, icon_button};
+use super::{MainView, icon_button, page_header};
 use crate::{icons::IconName, preferences, session_list, theme};
 
 /// 右键菜单的宽度，与前端 `min-w-[176px]` 同值。
@@ -319,6 +319,7 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let active = self.view == view;
+        let hover_background = cx.theme().list_hover;
         let mut item = h_flex()
             .id(SharedString::from(format!("nav-{view:?}")))
             .items_center()
@@ -335,8 +336,11 @@ impl Sidebar {
                 cx.notify();
             }))
             .child(icon.element(Size::Small));
+        // 当前页保持选中底色，其余项用悬停底色：两者都画会在悬停时把选中态盖掉。
         if active {
             item = item.bg(cx.theme().list_active);
+        } else {
+            item = item.hover(move |this| this.bg(hover_background));
         }
         item.child(label.to_string()).into_any_element()
     }
@@ -396,7 +400,7 @@ impl Sidebar {
             .items_center()
             .justify_between()
             .gap_2()
-            .px_3()
+            .px_2()
             .py_1()
             .child(
                 div()
@@ -783,7 +787,7 @@ impl Sidebar {
                     .bg(cx.theme().popover)
                     .border_1()
                     .border_color(cx.theme().border)
-                    .rounded(cx.theme().radius)
+                    .rounded(cx.theme().radius_lg)
                     // 点在菜单自己身上不算「外面」：拦下这一下，不让它冒泡到层上。
                     .on_mouse_down(
                         MouseButton::Left,
@@ -815,7 +819,9 @@ fn render_selection_checkbox(checked: bool, cx: &Context<Sidebar>) -> AnyElement
         .items_center()
         .justify_center()
         .size(px(16.0))
-        .rounded(px(5.0))
+        // 主题没有比 `radius` 更小的档，而 8px 在 16px 的方框上已经是半高、会读成圆形；
+        // 取最小的那个档（框架自己给小控件也是这么钳的，见 gpui-component 的 `Checkbox`）。
+        .rounded(cx.theme().radius.min(px(4.0)))
         .border_1()
         .border_color(border)
         .bg(if checked {
@@ -841,36 +847,41 @@ impl Render for Sidebar {
 
         let mut nav = v_flex()
             .gap_1()
-            .px_2()
+            .px_3()
             .py_2()
             .border_b_1()
-            .border_color(cx.theme().border)
+            .border_color(cx.theme().sidebar_border)
             .child(self.render_new_conversation_item(cx));
         if self.kanban_available {
             nav = nav.child(self.render_nav_item(MainView::Kanban, IconName::Board, "看板", cx));
         }
 
+        // 横向脊线：整列留 `px_3` 边距，行与页头再各自加 `px_2` 内缩，于是「AstrCode」、导航项、
+        // 项目名与会话名的文字都落在同一条线上，行的选中底色也都从同一条边起。
         let mut column = v_flex()
             .id("sidebar")
             .relative()
             .size_full()
+            .bg(cx.theme().sidebar)
+            .text_color(cx.theme().sidebar_foreground)
             .child(
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .px_4()
-                    .py_3()
+                page_header(cx)
+                    .px_3()
+                    .border_color(cx.theme().sidebar_border)
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
+                            .px_2()
                             .truncate()
-                            .text_base()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
                             .child("AstrCode"),
                     )
                     .child(icon_button(
                         "sidebar-new-project",
                         IconName::Plus,
+                        "新建项目",
                         cx,
                         |this: &mut Sidebar, cx| {
                             this.close_menu();
@@ -880,6 +891,7 @@ impl Render for Sidebar {
                     .child(icon_button(
                         "sidebar-collapse",
                         IconName::Sidebar,
+                        "收起侧边栏",
                         cx,
                         |this: &mut Sidebar, cx| {
                             this.close_menu();
@@ -896,7 +908,7 @@ impl Render for Sidebar {
                     .overflow_y_scroll()
                     .child(
                         v_flex()
-                            .px_2()
+                            .px_3()
                             .py_2()
                             .child(self.render_list_header(cx))
                             .children(rows),
@@ -923,7 +935,7 @@ impl Render for Sidebar {
                 .px_3()
                 .py_2()
                 .border_t_1()
-                .border_color(cx.theme().border)
+                .border_color(cx.theme().sidebar_border)
                 .child(
                     div()
                         .flex()
@@ -931,7 +943,7 @@ impl Render for Sidebar {
                         .items_center()
                         .justify_center()
                         .size(px(24.0))
-                        .rounded(px(12.0))
+                        .rounded(cx.theme().radius_full())
                         .bg(theme::brand_avatar_background())
                         .text_size(px(9.0))
                         .font_weight(FontWeight::SEMIBOLD)
@@ -951,6 +963,7 @@ impl Render for Sidebar {
                 .child(icon_button(
                     "sidebar-settings",
                     IconName::Settings,
+                    "设置",
                     cx,
                     |this: &mut Sidebar, cx| {
                         this.close_menu();

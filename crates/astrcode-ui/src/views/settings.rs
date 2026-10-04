@@ -23,17 +23,18 @@ use astrcode_protocol::{
     wire::{ApprovalModeDto, ThinkingCapabilityDto},
 };
 use gpui_kit::{
-    AnyElement, AppContext as _, Context, Entity, EventEmitter, FontWeight, Hsla,
+    AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FontWeight, Hsla,
     InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window,
     component::{
-        ActiveTheme as _, Disableable as _, Size,
+        ActiveTheme as _, Disableable as _, Sizable as _, Size,
         button::{Button, ButtonVariants as _},
         checkbox::Checkbox,
         h_flex,
         input::{Input, InputEvent, InputState},
         searchable_list::SearchableListItem,
         select::{Select, SelectEvent, SelectState},
+        spinner::Spinner,
         v_flex,
     },
     div, px,
@@ -43,7 +44,7 @@ use crate::{
     api::Api,
     icons::IconName,
     settings::{self, ModelSelection, SettingsSection, ThinkingFormMode, ThinkingFormValue},
-    views::icon_button,
+    views::{icon_button, page_header},
 };
 
 /// 内容列的宽度上限，与前端 `max-w-[1040px]` 同值。
@@ -1067,18 +1068,12 @@ impl Render for SettingsView {
 impl SettingsView {
     /// 页头：收起侧边栏时的展开入口 + 分区名。
     fn render_header(&self, cx: &mut Context<Self>) -> AnyElement {
-        let mut header = h_flex()
-            .flex_shrink_0()
-            .items_center()
-            .gap_2()
-            .px_6()
-            .py_3()
-            .border_b_1()
-            .border_color(cx.theme().border);
+        let mut header = page_header(cx);
         if !self.sidebar_open {
             header = header.child(icon_button(
                 "settings-expand-sidebar",
                 IconName::Sidebar,
+                "展开侧边栏",
                 cx,
                 |_this: &mut SettingsView, cx| cx.emit(SettingsEvent::ToggleSidebar),
             ));
@@ -1093,6 +1088,7 @@ impl SettingsView {
                 div()
                     .min_w_0()
                     .truncate()
+                    .text_sm()
                     .text_color(cx.theme().foreground)
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("设置"),
@@ -1108,9 +1104,11 @@ impl SettingsView {
                 .min_h_0()
                 .items_center()
                 .justify_center()
+                .gap_2()
                 .text_sm()
                 .text_color(cx.theme().muted_foreground)
-                .child("加载设置...")
+                .child(Spinner::new().small())
+                .child("加载设置…")
                 .into_any_element();
         }
 
@@ -1165,7 +1163,8 @@ impl SettingsView {
             .into_iter()
             .map(|section| {
                 let active = self.section == section;
-                h_flex()
+                let hover_background = cx.theme().list_hover;
+                let mut item = h_flex()
                     .id(SharedString::from(format!("settings-nav-{section:?}")))
                     .items_center()
                     .gap_2()
@@ -1174,18 +1173,19 @@ impl SettingsView {
                     .px_2()
                     .rounded(cx.theme().radius)
                     .text_sm()
-                    .bg(if active {
-                        cx.theme().list_active
-                    } else {
-                        cx.theme().transparent
-                    })
                     .child(section_icon(section).element(Size::Small))
                     .child(section.label().to_string())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.section = section;
                         cx.notify();
-                    }))
-                    .into_any_element()
+                    }));
+                // 当前分区保持选中底色，其余项用悬停底色，与侧边栏导航同一套状态。
+                if active {
+                    item = item.bg(cx.theme().list_active);
+                } else {
+                    item = item.hover(move |this| this.bg(hover_background));
+                }
+                item.into_any_element()
             })
             .collect();
         v_flex()
@@ -1610,7 +1610,7 @@ impl SettingsView {
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .child(profile.name.clone()),
                             )
-                            .child(badge("当前", cx.theme().success, is_active)),
+                            .child(badge("当前", cx.theme().success, is_active, cx)),
                     )
                     .child(provider_metadata(profile, cx)),
             )
@@ -1771,6 +1771,7 @@ impl SettingsView {
                             cx.theme().muted_foreground
                         },
                         true,
+                        cx,
                     )),
             )
             .child(provider_metadata_of(
@@ -1969,6 +1970,7 @@ impl SettingsView {
                     status.label(),
                     extension_status_color(status, cx),
                     true,
+                    cx,
                 )),
         );
         left = left.child(extension_metadata(extension, cx));
@@ -2100,6 +2102,7 @@ impl SettingsView {
                             .child(icon_button(
                                 "provider-config-close",
                                 IconName::Close,
+                                "关闭",
                                 cx,
                                 |this: &mut SettingsView, cx| {
                                     this.dismiss_dialog(cx);
@@ -2261,7 +2264,7 @@ impl SettingsView {
                     .id("settings-dialog")
                     .w_full()
                     .max_w(px(width))
-                    .rounded(cx.theme().radius)
+                    .rounded(cx.theme().radius_lg)
                     .border_1()
                     .border_color(cx.theme().border)
                     .bg(cx.theme().popover)
@@ -2666,7 +2669,7 @@ fn panel(children: Vec<AnyElement>, cx: &mut Context<SettingsView>) -> AnyElemen
         .rounded(cx.theme().radius)
         .border_1()
         .border_color(cx.theme().border)
-        .bg(cx.theme().secondary)
+        .bg(cx.theme().group_box)
         .children(children)
         .into_any_element()
 }
@@ -2798,12 +2801,12 @@ fn summary_block(
                 .child(
                     div()
                         .flex_shrink_0()
-                        .rounded(px(6.0))
+                        .rounded(cx.theme().radius)
                         .border_1()
                         .border_color(cx.theme().border)
                         .px_2()
                         .py(px(2.0))
-                        .text_size(px(11.0))
+                        .text_xs()
                         .text_color(cx.theme().muted_foreground)
                         .child(badge_text),
                 ),
@@ -2876,13 +2879,13 @@ fn provider_metadata_of(
 }
 
 /// 一枚小徽标；`shown` 为假时什么都不画（用来省掉「当前」这种条件标记）。
-fn badge(text: &str, color: Hsla, shown: bool) -> AnyElement {
+fn badge(text: &str, color: Hsla, shown: bool, cx: &App) -> AnyElement {
     let mut element = div()
         .flex_shrink_0()
-        .rounded(px(6.0))
+        .rounded(cx.theme().radius)
         .px_2()
         .py(px(1.0))
-        .text_size(px(11.0))
+        .text_xs()
         .font_weight(FontWeight::MEDIUM)
         .text_color(color);
     if !shown {
@@ -2895,12 +2898,12 @@ fn badge(text: &str, color: Hsla, shown: bool) -> AnyElement {
 /// 能力标签那样的小胶囊。
 fn pill(text: &str, cx: &mut Context<SettingsView>) -> AnyElement {
     div()
-        .rounded(px(6.0))
+        .rounded(cx.theme().radius)
         .border_1()
         .border_color(cx.theme().border)
         .bg(cx.theme().background)
         .px_2()
-        .text_size(px(11.0))
+        .text_xs()
         .text_color(cx.theme().muted_foreground)
         .child(text.to_string())
         .into_any_element()
@@ -2927,18 +2930,23 @@ fn radio_marker(checked: bool, cx: &mut Context<SettingsView>) -> AnyElement {
         .items_center()
         .justify_center()
         .size(px(16.0))
-        .rounded(px(8.0))
+        .rounded(cx.theme().radius_full())
         .border_1()
         .border_color(if checked {
             cx.theme().primary
         } else {
             cx.theme().border
         })
-        .child(div().size(px(8.0)).rounded(px(4.0)).bg(if checked {
-            cx.theme().primary
-        } else {
-            cx.theme().transparent
-        }))
+        .child(
+            div()
+                .size(px(8.0))
+                .rounded(cx.theme().radius_full())
+                .bg(if checked {
+                    cx.theme().primary
+                } else {
+                    cx.theme().transparent
+                }),
+        )
         .into_any_element()
 }
 

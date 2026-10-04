@@ -184,6 +184,11 @@ mod tests {
                 theme.primary,
             ),
             ("错误文字 / 底色", theme.danger, theme.background),
+            // 侧边栏与面板各自换了表面，正文与元信息都要在那边依然读得出来。
+            ("正文 / 侧边栏", theme.foreground, theme.sidebar),
+            ("元信息 / 侧边栏", theme.muted_foreground, theme.sidebar),
+            ("正文 / 容器面", theme.foreground, theme.group_box),
+            ("元信息 / 容器面", theme.muted_foreground, theme.group_box),
         ] {
             let ratio = contrast_ratio(text, surface);
             assert!(ratio >= 4.5, "{pair} 的对比度只有 {ratio:.2}∶1");

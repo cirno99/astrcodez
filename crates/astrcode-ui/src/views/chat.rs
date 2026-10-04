@@ -30,6 +30,7 @@ use gpui_kit::{
         h_flex,
         input::{Input, InputEvent, InputState, Textarea, TextareaState},
         message::MessageAlignment,
+        spinner::Spinner,
         text::{TextView, TextViewState},
         v_flex,
     },
@@ -60,7 +61,7 @@ use crate::{
         diff_line_kind, meta_rows, numbered_line, patch_files, summary_line, tool_view,
         truncate_preview,
     },
-    views::{ask_user_card::AskUserCard, icon_button},
+    views::{ask_user_card::AskUserCard, icon_button, page_header},
 };
 
 /// 工具卡正文的预览上限：字符数与行数谁先到谁生效，与前端 `previewText` 同口径。
@@ -2451,18 +2452,13 @@ impl ChatView {
             .map(|control| phase_label(control.phase))
             .unwrap_or("未连接");
 
-        let mut header = h_flex()
-            .items_center()
-            .gap_3()
-            .px_6()
-            .py_3()
-            .border_b_1()
-            .border_color(cx.theme().border);
+        let mut header = page_header(cx);
         // 侧边栏收起时给一条回到它的路（前端同样只在收起时显示这枚按钮）。
         if !self.sidebar_open {
             header = header.child(icon_button(
                 "chat-expand-sidebar",
                 IconName::Sidebar,
+                "展开侧边栏",
                 cx,
                 |_this: &mut ChatView, cx| cx.emit(ChatEvent::ToggleSidebar),
             ));
@@ -2472,11 +2468,13 @@ impl ChatView {
                 div()
                     .min_w_0()
                     .truncate()
-                    .font_weight(FontWeight::MEDIUM)
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
                     .child(title),
             )
             .child(
                 div()
+                    .flex_shrink_0()
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
                     .child(phase),
@@ -2545,7 +2543,7 @@ impl ChatView {
             .gap_1()
             .px_2()
             .py_1()
-            .rounded_full()
+            .rounded(cx.theme().radius)
             .text_sm()
             .text_color(text_color)
             .bg(background)
@@ -2610,7 +2608,7 @@ impl ChatView {
 
         v_flex()
             .w(px(MODEL_PANEL_WIDTH))
-            .rounded(cx.theme().radius)
+            .rounded(cx.theme().radius_lg)
             .border_1()
             .border_color(cx.theme().border)
             .bg(cx.theme().popover)
@@ -2744,9 +2742,27 @@ impl ChatView {
             );
         }
         if let Some(metrics) = self.state.metrics() {
+            // 指标收成一条簇：标签压暗、数字等宽。原来是「输入 2.0K 缓存 50.0%」这样一串
+            // 同色同重的句子，读数得在句子中间找，位数一变还会左右晃。
+            let mut cluster = h_flex().flex_shrink_0().gap_3();
             for item in metrics::metrics_row(metrics) {
-                row = row.child(div().child(format!("{} {}", item.label, item.value)));
+                cluster = cluster.child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(item.label),
+                        )
+                        .child(
+                            div()
+                                .font_family(cx.theme().mono_font_family.clone())
+                                .text_color(cx.theme().foreground)
+                                .child(item.value),
+                        ),
+                );
             }
+            row = row.child(cluster);
         }
 
         row.into_any_element()
@@ -3001,12 +3017,11 @@ impl ChatView {
         let visible = slash_command::visible_commands(&self.commands, &panel.trigger.query);
         let mut list = v_flex().p_1();
         if visible.is_empty() {
-            let note = if self.commands_loading {
-                "加载中…".to_owned()
+            list = list.child(if self.commands_loading {
+                panel_loading("加载中…", cx)
             } else {
-                format!("没有找到匹配「{}」的命令", panel.trigger.query)
-            };
-            list = list.child(panel_note(note, cx));
+                panel_note(format!("没有找到匹配「{}」的命令", panel.trigger.query), cx)
+            });
         } else {
             let mut group: Option<bool> = None;
             for (index, command) in visible.iter().enumerate().take(COMMAND_PANEL_MAX_ROWS) {
@@ -3089,12 +3104,11 @@ impl ChatView {
     fn render_argument_panel(&self, panel: &ArgumentPanel, cx: &mut Context<Self>) -> AnyElement {
         let mut list = v_flex().p_1();
         if panel.items.is_empty() {
-            let note = if panel.loading {
-                "加载中…".to_owned()
+            list = list.child(if panel.loading {
+                panel_loading("加载中…", cx)
             } else {
-                "无补全建议".to_owned()
-            };
-            list = list.child(panel_note(note, cx));
+                panel_note("无补全建议".to_owned(), cx)
+            });
         } else {
             for (index, item) in panel.items.iter().enumerate().take(COMMAND_PANEL_MAX_ROWS) {
                 list =
@@ -3374,7 +3388,7 @@ fn panel_shell(list: AnyElement, cx: &App) -> AnyElement {
     div()
         .w_full()
         .max_w(px(COMMAND_PANEL_MAX_WIDTH))
-        .rounded(cx.theme().radius)
+        .rounded(cx.theme().radius_lg)
         .border_1()
         .border_color(cx.theme().border)
         .bg(cx.theme().popover)
@@ -3382,7 +3396,7 @@ fn panel_shell(list: AnyElement, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-/// 浮层里的一句提示（加载中、没有匹配、已截断）。
+/// 浮层里的一句提示（没有匹配、已截断）。
 fn panel_note(text: String, cx: &App) -> AnyElement {
     div()
         .px_3()
@@ -3390,6 +3404,22 @@ fn panel_note(text: String, cx: &App) -> AnyElement {
         .text_xs()
         .text_color(cx.theme().muted_foreground)
         .child(text)
+        .into_any_element()
+}
+
+/// 浮层里的加载态：转圈加一句话。
+///
+/// 转圈是这里唯一能表示「还在等」的东西：一句静态的「加载中…」与「没有结果」长得一模一样。
+fn panel_loading(text: &str, cx: &App) -> AnyElement {
+    h_flex()
+        .items_center()
+        .gap_2()
+        .px_3()
+        .py_2()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child(Spinner::new().small())
+        .child(text.to_owned())
         .into_any_element()
 }
 
