@@ -7,6 +7,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+#[cfg(not(target_family = "wasm"))]
 use fs2::FileExt;
 
 pub use crate::config::defaults::{astrcode_dir, user_home_dir};
@@ -35,12 +36,17 @@ pub fn write_file_atomic_bytes(path: &Path, content: &[u8]) -> io::Result<()> {
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent)?;
-    let (mut temporary, temporary_path) = create_atomic_write_file(parent)?;
-    let write_result = temporary
-        .write_all(content)
-        .and_then(|()| temporary.flush())
-        .and_then(|()| temporary.sync_all());
-    drop(temporary);
+    // 文件句柄必须在 rename 之前离开作用域（Windows 上覆盖打开中的文件会失败），
+    // 所以写入放进块里，靠块结束释放，而不是显式 `drop`：wasm 上 `File` 没有析构，
+    // 显式 `drop` 会触发 clippy::drop_non_drop。
+    let (write_result, temporary_path) = {
+        let (mut temporary, temporary_path) = create_atomic_write_file(parent)?;
+        let result = temporary
+            .write_all(content)
+            .and_then(|()| temporary.flush())
+            .and_then(|()| temporary.sync_all());
+        (result, temporary_path)
+    };
     if let Err(error) = write_result {
         let _ = std::fs::remove_file(&temporary_path);
         return Err(error);
@@ -147,6 +153,7 @@ fn write_json_state_unlocked<T: serde::Serialize>(path: &Path, state: &T) -> std
     write_file_atomic(path, &json)
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn with_state_file_lock<R>(
     path: &Path,
     operation: impl FnOnce() -> io::Result<R>,
@@ -176,6 +183,15 @@ fn with_state_file_lock<R>(
         (Ok(_), Err(error)) => Err(error),
         (Ok(value), Ok(())) => Ok(value),
     }
+}
+
+/// wasm 上不存在第二个写者，也没有文件锁，直接执行。
+#[cfg(target_family = "wasm")]
+fn with_state_file_lock<R>(
+    _path: &Path,
+    operation: impl FnOnce() -> io::Result<R>,
+) -> io::Result<R> {
+    operation()
 }
 
 /// Return whether `candidate` stays inside `root`.

@@ -11,7 +11,7 @@
 
 用 Rust 从零构建的 AI 编程助手平台。
 
-AstrCode 是一个由 Rust workspace 与 React + TypeScript 前端组成的全栈 AI 编程助手。包含带工具执行的 Agent 循环、基于 SSE 流式传输的多 Provider LLM 层（Anthropic 与 OpenAI 兼容 Provider）、面向内置扩展与磁盘 IPC 子进程扩展的类型化作者接口（后台预热、健康检查、启动阶段事件通道）、MCP 常驻进程池（跨 turn 复用长连接）、内置 Web 搜索与 URL 抓取工具、带自动压缩的上下文窗口管理、评测框架，以及多种交互方式：Web 前端、HTTP/SSE API 和 ACP（Agent Client Protocol）适配器。
+AstrCode 是一个全部用 Rust 构建的 AI 编程助手平台，包含 GPUI 桌面 App、浏览器 UI 与 CLI。包含带工具执行的 Agent 循环、基于 SSE 流式传输的多 Provider LLM 层（Anthropic 与 OpenAI 兼容 Provider）、面向内置扩展与磁盘 IPC 子进程扩展的类型化作者接口（后台预热、健康检查、启动阶段事件通道）、MCP 常驻进程池（跨 turn 复用长连接）、内置 Web 搜索与 URL 抓取工具、带自动压缩的上下文窗口管理、评测框架，以及多种交互方式：桌面 App、浏览器 UI、HTTP/SSE API 和 ACP（Agent Client Protocol）适配器。
 
 ## 目录
 
@@ -245,8 +245,8 @@ cargo run -- exec "解释一下 agent loop 的架构"
 # HTTP/SSE 服务器
 cargo run -- server
 
-# Web 前端（开发服务器）
-cd frontend && npm ci && npm run dev
+# 构建浏览器 UI（wasm）并把产物内嵌进服务端二进制
+scripts/build.sh
 
 # 评测框架（需要 dev-mode feature）
 cargo run --features dev-mode -- eval
@@ -270,8 +270,8 @@ AstrCode 使用存储在 `~/.astrcode/config.toml` 的 TOML 配置系统。配�
 
 ```
           ┌───────────────────────┐  ┌───────────┐
-          │      Web 前端          │  │ ACP 客户端 │
-          │ React 19 + TypeScript │  │  (stdio)  │
+          │       Web UI          │  │ ACP 客户端 │
+          │  gpui + WebAssembly   │  │  (stdio)  │
           └───────────┬───────────┘  └─────┬─────┘
                       │ SSE / JSON-RPC      │ ACP JSON-RPC
                       │                     │ over stdio
@@ -480,8 +480,7 @@ Identity → System → Task Guidelines → Communication → Environment
 | **Server** | `cargo run -- server [--addr 0.0.0.0:3847]` | HTTP/SSE 服务器，支持 JSON-RPC、会话管理、实时事件流 |
 | **ACP** | `cargo run -- acp` | ACP stdio 适配器，用于 IDE/编辑器集成 |
 | **Eval** | `cargo run --features dev-mode -- eval` | 运行评测基准（需要 `dev-mode` feature） |
-| **Web** | `cargo run -- server` 后打开 `http://127.0.0.1:3847` | 浏览器聊天界面；前端产物在编译期内嵌进二进制，无需单独部署 |
-| **Web (dev)** | `cd frontend && npm run dev` | Vite 开发服务器，支持热更新，通过 SSE 连接后端 |
+| **Web** | `scripts/build.sh` 后打开 `http://127.0.0.1:3847` | 浏览器 UI；产物在编译期内嵌进二进制，无需单独部署 |
 
 ## 延伸阅读
 
@@ -497,7 +496,6 @@ Identity → System → Task Guidelines → Communication → Environment
 | [架构:统一 Extension 工具运行时](docs/architecture/unified-extension-tool-runtime.md) | 统一扩展工具运行时边界与迁移记录 |
 | [架构:S5R 3.0 实现](docs/architecture/s5r-3-implementation.md) | S5R 3.0 实现决策与状态 |
 | [发布指南](docs/release.md) | 版本同步、发布 workflow、npm/GitHub 分发 |
-| [待办事项](docs/TODO.md) | 项目路线图与待办项 |
 
 ## 发行
 

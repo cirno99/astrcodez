@@ -18,7 +18,6 @@ pub use crate::{
 };
 
 /// 本机运行中 server 的发现文件（`run.json`）。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RunInfoDto {
@@ -26,7 +25,6 @@ pub struct RunInfoDto {
 }
 
 /// 新建会话请求。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateSessionRequest {
@@ -36,7 +34,6 @@ pub struct CreateSessionRequest {
 }
 
 /// 新建会话响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateSessionResponseDto {
@@ -44,7 +41,6 @@ pub struct CreateSessionResponseDto {
 }
 
 /// Session 工具可见性线缆契约。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ToolSelectionDto {
@@ -70,7 +66,6 @@ impl From<SessionToolSelection> for ToolSelectionDto {
 }
 
 /// 配置 Session 后续 turn 工具边界的请求。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigureSessionToolsRequest {
@@ -78,7 +73,6 @@ pub struct ConfigureSessionToolsRequest {
 }
 
 /// 配置 Session 工具边界后的有效选择。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigureSessionToolsResponse {
@@ -86,7 +80,6 @@ pub struct ConfigureSessionToolsResponse {
 }
 
 /// Prompt 和 conversation block 共用的附件线缆形状。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptAttachmentDto {
@@ -116,7 +109,6 @@ impl From<PromptAttachmentDto> for MessageAttachment {
 }
 
 /// 提交 prompt 或 mid-turn 注入请求（二者共用 `text` 字段）。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptRequest {
@@ -126,7 +118,6 @@ pub struct PromptRequest {
 }
 
 /// 工具审批决议请求。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolApprovalRequest {
@@ -135,7 +126,6 @@ pub struct ToolApprovalRequest {
 }
 
 /// 当前挂起的核心工具审批。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolApprovalDto {
@@ -146,7 +136,6 @@ pub struct ToolApprovalDto {
 }
 
 /// prompt 提交结果。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(
     rename_all = "camelCase",
@@ -161,7 +150,6 @@ pub enum PromptSubmitResponse {
 }
 
 /// 手动 compact 请求。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompactSessionRequest {
@@ -171,7 +159,6 @@ pub struct CompactSessionRequest {
 }
 
 /// 手动 compact 响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompactSessionResponse {
@@ -180,7 +167,6 @@ pub struct CompactSessionResponse {
 }
 
 /// 执行会话斜杠命令请求。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandInvokeRequest {
@@ -189,7 +175,6 @@ pub struct CommandInvokeRequest {
 }
 
 /// 执行会话斜杠命令响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(
     rename_all = "camelCase",
@@ -213,7 +198,6 @@ pub enum CommandInvokeResponse {
 }
 
 /// 斜杠命令参数补全请求。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandCompletionRequest {
@@ -224,7 +208,6 @@ pub struct CommandCompletionRequest {
 }
 
 /// 斜杠命令参数补全响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandCompletionResponse {
@@ -233,7 +216,6 @@ pub struct CommandCompletionResponse {
 }
 
 /// 斜杠命令参数补全项。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandCompletionItemDto {
@@ -244,7 +226,6 @@ pub struct CommandCompletionItemDto {
 }
 
 /// 斜杠命令列表响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SlashCommandListResponseDto {
@@ -256,7 +237,6 @@ pub struct SlashCommandListResponseDto {
 }
 
 /// 状态栏项 DTO。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusItemDto {
@@ -271,7 +251,6 @@ pub struct StatusItemDto {
 }
 
 /// 可执行斜杠命令信息（命令列表与扩展声明共用的全保真视图）。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SlashCommandInfoDto {
@@ -291,7 +270,6 @@ pub struct SlashCommandInfoDto {
 }
 
 /// 被遮蔽的命令诊断。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShadowedSlashCommandDto {
@@ -303,8 +281,6 @@ pub struct ShadowedSlashCommandDto {
 }
 
 /// Fork a session from the latest durable event or an explicit durable sequence.
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
-#[cfg_attr(feature = "typescript", ts(optional_fields))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ForkSessionRequest {
@@ -314,7 +290,6 @@ pub struct ForkSessionRequest {
 }
 
 /// 会话列表项。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionListItemDto {
@@ -330,7 +305,6 @@ pub struct SessionListItemDto {
 }
 
 /// 会话列表响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionListResponseDto {
@@ -338,7 +312,6 @@ pub struct SessionListResponseDto {
 }
 
 /// conversation cursor。v1 中它是 snapshot 最新 durable seq 的十进制字符串。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationCursorDto {
@@ -346,7 +319,6 @@ pub struct ConversationCursorDto {
 }
 
 /// conversation 全量快照响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationSnapshotResponseDto {
@@ -359,7 +331,6 @@ pub struct ConversationSnapshotResponseDto {
 }
 
 /// UI timeline 的不透明分页游标。客户端只负责原样回传。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationTimelineCursorDto {
@@ -367,7 +338,6 @@ pub struct ConversationTimelineCursorDto {
 }
 
 /// 与历史列表解耦的当前 conversation 状态。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationStateResponseDto {
@@ -380,7 +350,6 @@ pub struct ConversationStateResponseDto {
 }
 
 /// 一页只读 conversation timeline；新事件仍通过 SSE 增量发送。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationItemsPageResponseDto {
@@ -393,7 +362,6 @@ pub struct ConversationItemsPageResponseDto {
 }
 
 /// conversation 控制状态。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationControlStateDto {
@@ -411,7 +379,6 @@ pub struct ConversationControlStateDto {
 /// 会话累计的模型用量指标。
 ///
 /// 这是 durable event log 的纯函数投影，客户端以最新值覆盖本地状态即可，无需增量累加。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationMetricsDto {
@@ -456,7 +423,6 @@ pub struct ConversationMetricsDto {
 }
 
 /// LLM 请求的瞬态 HTTP 或传输重试状态。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmRetryStatusDto {
@@ -469,7 +435,9 @@ pub struct LlmRetryStatusDto {
 }
 
 /// conversation 块。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+// ToolCall 携带多个 serde_json::Value；Value 的表示大小随 feature 组合（如 preserve_order）变化，
+// 在最宽的组合下会越过 large_enum_variant 阈值，而线缆格式与序列化行为不受影响。
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(
     rename_all = "camelCase",
@@ -535,7 +503,6 @@ pub enum ConversationBlockDto {
 }
 
 /// conversation 块状态。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ConversationBlockStatusDto {
@@ -553,7 +520,6 @@ impl_wire_values!(ConversationBlockStatusDto {
 /// 工具调用生命周期状态。`Complete` 只表示调用正常结束；
 /// 结果是否为错误属结果语义（见块文本/元数据），不体现在生命周期里。
 /// `Failed` 表示执行基础设施失败，`Cancelled` 表示调用被取消。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ToolCallStatusDto {
@@ -573,7 +539,6 @@ impl ToolCallStatusDto {
 }
 
 /// SSE 信封。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationStreamEnvelopeDto {
@@ -583,7 +548,6 @@ pub struct ConversationStreamEnvelopeDto {
 }
 
 /// SSE conversation 增量。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(
     rename_all = "camelCase",
@@ -673,7 +637,6 @@ pub enum ConversationDeltaDto {
 }
 
 /// HTTP 错误响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationErrorEnvelopeDto {
@@ -682,7 +645,6 @@ pub struct ConversationErrorEnvelopeDto {
 }
 
 /// 删除项目响应（删除某工作目录下所有会话）。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeleteProjectResponseDto {
@@ -692,7 +654,6 @@ pub struct DeleteProjectResponseDto {
 // ── Config / Models DTOs ──
 
 /// GET /api/config 响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigViewResponseDto {
@@ -700,10 +661,8 @@ pub struct ConfigViewResponseDto {
     pub active_profile: String,
     pub active_model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "typescript", ts(optional))]
     pub active_small_profile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "typescript", ts(optional))]
     pub active_small_model: Option<String>,
     pub approval_mode: ApprovalModeDto,
     pub profiles: Vec<ProfileDto>,
@@ -711,8 +670,6 @@ pub struct ConfigViewResponseDto {
 }
 
 /// GET /api/extensions 响应中的单个扩展状态。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
-#[cfg_attr(feature = "typescript", ts(optional_fields))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtensionStateDto {
@@ -727,7 +684,6 @@ pub struct ExtensionStateDto {
 }
 
 /// 扩展可发射事件的声明。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CustomEventDeliveryDto {
@@ -736,7 +692,6 @@ pub enum CustomEventDeliveryDto {
     GlobalLive,
 }
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomEventDeclarationDto {
@@ -746,7 +701,6 @@ pub struct CustomEventDeclarationDto {
     pub max_payload_bytes: usize,
 }
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
@@ -759,7 +713,6 @@ pub enum CustomEventSourceFilterDto {
     Extension { extension_id: String },
 }
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomEventSubscriptionDto {
@@ -768,7 +721,6 @@ pub struct CustomEventSubscriptionDto {
     pub source: CustomEventSourceFilterDto,
 }
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CustomEventConsumerActionDto {
@@ -778,7 +730,6 @@ pub enum CustomEventConsumerActionDto {
     SkipToStreamHead,
 }
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CustomEventConsumerControlRequest {
@@ -787,8 +738,6 @@ pub struct CustomEventConsumerControlRequest {
     pub action: CustomEventConsumerActionDto,
 }
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
-#[cfg_attr(feature = "typescript", ts(optional_fields))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomEventConsumerStatusDto {
@@ -806,7 +755,6 @@ pub struct CustomEventConsumerStatusDto {
     pub quarantined_events: u64,
 }
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomEventConsumerListResponseDto {
@@ -817,7 +765,6 @@ pub struct CustomEventConsumerListResponseDto {
 ///
 /// 定位为开放 API 的自描述契约：除前端外，第三方调用方也可据此
 /// 了解扩展提供的全部能力，因此各声明字段即使前端未消费也保留。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtensionDeclarationDto {
@@ -844,7 +791,6 @@ pub struct ExtensionDeclarationDto {
 }
 
 /// Host transport features required before an extension can be loaded.
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TransportFeatureDto {
@@ -852,7 +798,6 @@ pub enum TransportFeatureDto {
 }
 
 /// 扩展注册的工具定义。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolDefinitionDto {
@@ -875,7 +820,6 @@ impl From<astrcode_core::tool::ToolDefinition> for ToolDefinitionDto {
     }
 }
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtensionHttpRouteDto {
@@ -886,8 +830,6 @@ pub struct ExtensionHttpRouteDto {
     pub max_body_bytes: usize,
 }
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
-#[cfg_attr(feature = "typescript", ts(optional_fields))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtensionDiagnosticsDto {
@@ -904,8 +846,6 @@ pub struct ExtensionDiagnosticsDto {
     pub last_error: Option<String>,
 }
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
-#[cfg_attr(feature = "typescript", ts(optional_fields))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtensionStageDiagnosticsDto {
@@ -917,7 +857,6 @@ pub struct ExtensionStageDiagnosticsDto {
 }
 
 /// GET /api/extensions 响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtensionListResponseDto {
@@ -925,7 +864,6 @@ pub struct ExtensionListResponseDto {
 }
 
 /// POST /api/extensions/reload 响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtensionReloadResponseDto {
@@ -933,7 +871,6 @@ pub struct ExtensionReloadResponseDto {
 }
 
 /// POST /api/extensions/set-enabled 请求。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetExtensionEnabledRequest {
@@ -942,7 +879,6 @@ pub struct SetExtensionEnabledRequest {
 }
 
 /// POST /api/extensions/set-enabled 响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetExtensionEnabledResponseDto {
@@ -951,7 +887,6 @@ pub struct SetExtensionEnabledResponseDto {
 }
 
 /// 配置文件中的 Profile 信息。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileDto {
@@ -965,7 +900,6 @@ pub struct ProfileDto {
 }
 
 /// GET /api/config/provider-catalog 响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderCatalogResponseDto {
@@ -973,7 +907,6 @@ pub struct ProviderCatalogResponseDto {
 }
 
 /// Provider catalog 中的单个 provider spec。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderSpecDto {
@@ -989,7 +922,6 @@ pub struct ProviderSpecDto {
 }
 
 /// Provider catalog 中的 endpoint preset。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderEndpointPresetDto {
@@ -1001,7 +933,6 @@ pub struct ProviderEndpointPresetDto {
 }
 
 /// Provider catalog 暴露给 UI 的能力摘要。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderSpecCapabilitiesDto {
@@ -1012,7 +943,6 @@ pub struct ProviderSpecCapabilitiesDto {
 }
 
 /// POST /api/config/provider-preset/apply 请求。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyProviderPresetRequest {
@@ -1036,7 +966,6 @@ const fn is_false(value: &bool) -> bool {
 }
 
 /// POST /api/config/provider-preset/apply 响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyProviderPresetResponseDto {
@@ -1049,7 +978,6 @@ pub struct ApplyProviderPresetResponseDto {
 }
 
 /// POST /api/config/provider-preset/remove 请求。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoveProviderPresetRequest {
@@ -1057,7 +985,6 @@ pub struct RemoveProviderPresetRequest {
 }
 
 /// POST /api/config/provider-preset/remove 响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoveProviderPresetResponseDto {
@@ -1070,7 +997,6 @@ pub struct RemoveProviderPresetResponseDto {
 }
 
 /// 标准化 thinking 配置 DTO（映射 core::llm::thinking::ThinkingConfig）。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThinkingConfigDto {
@@ -1103,7 +1029,6 @@ impl From<ThinkingConfigDto> for astrcode_core::llm::thinking::ThinkingConfig {
 }
 
 /// Profile 中的模型选项（与 config.toml 的 `modelOptions` 对齐）。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelOptionsDto {
@@ -1113,7 +1038,6 @@ pub struct ModelOptionsDto {
 }
 
 /// Profile 中的模型信息。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelDto {
@@ -1129,7 +1053,6 @@ pub struct ModelDto {
 }
 
 /// POST /api/config/model-options 请求。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateModelOptionsRequest {
@@ -1141,7 +1064,6 @@ pub struct UpdateModelOptionsRequest {
 }
 
 /// POST /api/config/model-options 响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateModelOptionsResponseDto {
@@ -1151,7 +1073,6 @@ pub struct UpdateModelOptionsResponseDto {
 }
 
 /// POST /api/config/active-selection 请求。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateActiveSelectionRequest {
@@ -1165,7 +1086,6 @@ pub struct UpdateActiveSelectionRequest {
 }
 
 /// POST /api/config/active-selection 响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateActiveSelectionResponseDto {
@@ -1174,7 +1094,6 @@ pub struct UpdateActiveSelectionResponseDto {
 }
 
 /// POST /api/config/reload 响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigReloadResponseDto {
@@ -1187,7 +1106,6 @@ pub struct ConfigReloadResponseDto {
 }
 
 /// GET /api/models/current 响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CurrentModelResponseDto {
@@ -1198,7 +1116,6 @@ pub struct CurrentModelResponseDto {
 }
 
 /// GET /api/models 响应中的单个模型。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AvailableModelDto {
@@ -1209,7 +1126,6 @@ pub struct AvailableModelDto {
 }
 
 /// GET /api/models 响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelListResponseDto {
@@ -1217,7 +1133,6 @@ pub struct ModelListResponseDto {
 }
 
 /// POST /api/models/test 响应。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelTestResponseDto {
@@ -1226,21 +1141,18 @@ pub struct ModelTestResponseDto {
 }
 
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtensionServiceDependencyDto {
     pub service: String,
     pub kind: ExtensionDependencyKindDto,
 }
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExtensionDependencyKindDto {
     Required,
     Optional,
 }
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExtensionServiceBlockDto {
@@ -1257,6 +1169,31 @@ pub enum ExtensionServiceBlockDto {
     DependencyBlocked {
         provider: String,
     },
+}
+
+/// GET /api/preferences 与 PUT /api/preferences 的响应。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiPreferencesResponseDto {
+    /// 服务端是否已存有偏好。
+    ///
+    /// 为假时界面才把旧 localStorage 迁移上来；迁移是一次性的，一旦存过就绝不再迁，
+    /// 否则清空偏好后旧值会自己回来。
+    pub stored: bool,
+    pub sidebar_width: f64,
+    pub collapsed_project_dirs: Vec<String>,
+    pub kanban_project_paths: Vec<String>,
+    pub kanban_ignored_project_paths: Vec<String>,
+}
+
+/// PUT /api/preferences 请求：整份替换。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateUiPreferencesRequest {
+    pub sidebar_width: f64,
+    pub collapsed_project_dirs: Vec<String>,
+    pub kanban_project_paths: Vec<String>,
+    pub kanban_ignored_project_paths: Vec<String>,
 }
 
 #[cfg(test)]

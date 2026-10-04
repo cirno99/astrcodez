@@ -12,7 +12,10 @@ use astrcode_extensions::{
     runner::ExtensionRunner,
 };
 use astrcode_session::SessionRuntimeServices;
-use astrcode_storage::{EventReader, SessionReader, SessionStore, config_store::FileConfigStore};
+use astrcode_storage::{
+    EventReader, SessionReader, SessionStore, config_store::FileConfigStore,
+    ui_preferences::FileUiPreferencesStore,
+};
 
 use crate::session_resource_cleanup::SessionResourceCleanup;
 
@@ -84,6 +87,14 @@ impl ServerRuntime {
 
     pub(crate) fn config_manager(&self) -> &Arc<ConfigManager> {
         &self.config_manager
+    }
+
+    /// 界面偏好与配置文件同目录。
+    ///
+    /// 路径从 config store 派生而不是另存一份：测试和嵌入式启动用自定义的
+    /// `config.toml` 路径做隔离，偏好文件必须跟着走，否则会写进真实的 `~/.astrcode/`。
+    pub(crate) fn ui_preferences(&self) -> FileUiPreferencesStore {
+        FileUiPreferencesStore::alongside_config(&self.config_manager().config_store().path())
     }
 
     pub(crate) fn session_manager(&self) -> &Arc<SessionManager> {

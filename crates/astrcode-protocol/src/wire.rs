@@ -37,7 +37,6 @@ macro_rules! impl_domain_to_wire_conversion {
     };
 }
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandAvailabilityDto {
@@ -50,7 +49,6 @@ impl_wire_values!(CommandAvailabilityDto {
     InteractiveOnly,
 });
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionCommandKindDto {
@@ -63,7 +61,6 @@ impl_wire_values!(SessionCommandKindDto {
     SelectModel,
 });
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "command", rename_all = "snake_case")]
 pub enum CommandExecutionDto {
@@ -71,7 +68,6 @@ pub enum CommandExecutionDto {
     Host(SessionCommandKindDto),
 }
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExtensionSourceDto {
@@ -86,7 +82,6 @@ impl_wire_values!(ExtensionSourceDto {
     Unknown,
 });
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExtensionStageStatusDto {
@@ -105,7 +100,6 @@ impl_wire_values!(ExtensionStageStatusDto {
     Skipped,
 });
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageRoleDto {
@@ -122,7 +116,6 @@ impl_domain_to_wire_conversion!(LlmRole => MessageRoleDto {
     Tool,
 });
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum ExtensionHttpMethodDto {
@@ -155,7 +148,6 @@ macro_rules! impl_bidirectional_wire_conversion {
     };
 }
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PhaseDto {
@@ -176,7 +168,6 @@ impl_bidirectional_wire_conversion!(Phase => PhaseDto {
     Error,
 });
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolOutputStreamDto {
@@ -186,7 +177,6 @@ pub enum ToolOutputStreamDto {
 
 impl_bidirectional_wire_conversion!(ToolOutputStream => ToolOutputStreamDto { Stdout, Stderr });
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalDecisionDto {
@@ -203,7 +193,6 @@ impl_bidirectional_wire_conversion!(ApprovalDecision => ApprovalDecisionDto {
     DenyAlways,
 });
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalModeDto {
@@ -213,7 +202,6 @@ pub enum ApprovalModeDto {
 
 impl_bidirectional_wire_conversion!(ApprovalMode => ApprovalModeDto { Manual, Yolo });
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProviderWireFormatDto {
     #[serde(rename = "openai_chat_completions")]
@@ -230,7 +218,6 @@ impl_bidirectional_wire_conversion!(ProviderWireFormat => ProviderWireFormatDto 
     AnthropicMessages,
 });
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderAuthSchemeDto {
@@ -245,7 +232,6 @@ impl_bidirectional_wire_conversion!(ProviderAuthScheme => ProviderAuthSchemeDto 
     XApiKey,
 });
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThinkingLevelDto {
@@ -258,7 +244,6 @@ impl_bidirectional_wire_conversion!(ThinkingLevel => ThinkingLevelDto { Low, Med
 
 /// User-facing thinking capability. Provider wire encoding remains an internal
 /// config/provider concern and is intentionally omitted from this DTO.
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThinkingCapabilityDto {
@@ -282,7 +267,6 @@ impl From<astrcode_core::llm::thinking::ThinkingCapability> for ThinkingCapabili
     }
 }
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentSessionStatusDto {
@@ -297,7 +281,6 @@ impl_wire_values!(AgentSessionStatusDto {
     Failed,
 });
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExtensionCapabilityDto {
@@ -350,7 +333,6 @@ impl_wire_values!(ExtensionCapabilityDto {
     LiveConversation,
 });
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolOriginDto {
@@ -363,7 +345,6 @@ impl_domain_to_wire_conversion!(ToolOrigin => ToolOriginDto {
     Extension,
 });
 
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionModeDto {

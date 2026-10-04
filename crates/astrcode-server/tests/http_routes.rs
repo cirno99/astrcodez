@@ -31,6 +31,7 @@ use astrcode_protocol::{
         ConversationSnapshotResponseDto, ConversationStateResponseDto, CreateSessionResponseDto,
         CustomEventConsumerListResponseDto, CustomEventConsumerStatusDto, PromptSubmitResponse,
         ProviderCatalogResponseDto, SlashCommandListResponseDto, ToolSelectionDto,
+        UiPreferencesResponseDto,
     },
     wire::{ProviderAuthSchemeDto, ProviderWireFormatDto},
 };
@@ -223,6 +224,52 @@ async fn http_routes_do_not_require_auth_token() {
         .await
         .unwrap();
     assert_eq!(no_auth.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn preferences_round_trip_and_report_the_one_time_migration_gate() {
+    let runtime = runtime(Arc::new(immediate_llm())).await;
+    let app = router(Arc::clone(&runtime)).unwrap();
+
+    let fresh = get_json::<UiPreferencesResponseDto>(app.clone(), "/api/preferences").await;
+    assert!(!fresh.stored, "全新机器上还没有偏好文件");
+    assert_eq!(fresh.sidebar_width, 300.0);
+
+    let saved = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/preferences")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "sidebarWidth": 264.0,
+                        "collapsedProjectDirs": ["/w/alpha"],
+                        "kanbanProjectPaths": ["/w/beta"],
+                        "kanbanIgnoredProjectPaths": ["/w/gamma"],
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(saved.status(), StatusCode::OK);
+    let saved: UiPreferencesResponseDto = serde_json::from_slice(&body_bytes(saved).await).unwrap();
+    assert!(saved.stored, "写成功就算已存过，迁移闸门就此关上");
+
+    let reloaded = get_json::<UiPreferencesResponseDto>(app, "/api/preferences").await;
+    assert!(reloaded.stored);
+    assert_eq!(reloaded.sidebar_width, 264.0);
+    assert_eq!(
+        reloaded.collapsed_project_dirs,
+        vec!["/w/alpha".to_string()]
+    );
+    assert_eq!(
+        reloaded.kanban_ignored_project_paths,
+        vec!["/w/gamma".to_string()]
+    );
 }
 
 #[tokio::test]
@@ -2575,9 +2622,9 @@ async fn runtime_with_event_store(
     ))
 }
 
-/// 根路径必须命中内嵌前端产物（真实产物或占位页都是 HTML）。
+/// 根路径必须命中内嵌的 Web UI 产物。
 #[tokio::test]
-async fn root_serves_embedded_frontend_index() {
+async fn root_serves_embedded_web_ui_index() {
     let runtime = runtime(Arc::new(immediate_llm())).await;
     let app = router(runtime).unwrap();
 
@@ -2602,15 +2649,42 @@ async fn root_serves_embedded_frontend_index() {
     );
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     assert!(
-        body.starts_with(b"<!doctype html"),
+        body.starts_with(b"<!DOCTYPE html"),
         "unexpected index body: {}",
         String::from_utf8_lossy(&body)
     );
 }
 
-/// 内嵌前端不得吞掉 `/api` 下的未知路径：必须仍是 JSON 404，前端据此提示接口不存在。
+/// 桌面 App 之前的 `/app` 挂载点必须 308 跳到根路径的等价位置。
 #[tokio::test]
-async fn unknown_api_path_returns_json_404_instead_of_frontend() {
+async fn legacy_app_mount_redirects_to_the_site_root() {
+    let runtime = runtime(Arc::new(immediate_llm())).await;
+    let app = router(runtime).unwrap();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/app/wasm/astrcode_webui.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::LOCATION)
+            .and_then(|value| value.to_str().ok()),
+        Some("/wasm/astrcode_webui.js")
+    );
+}
+
+/// 内嵌 Web UI 产物不得吞掉 `/api` 下的未知路径：必须仍是 JSON 404。
+#[tokio::test]
+async fn unknown_api_path_returns_json_404_instead_of_web_ui() {
     let runtime = runtime(Arc::new(immediate_llm())).await;
     let app = router(runtime).unwrap();
 
@@ -2631,9 +2705,9 @@ async fn unknown_api_path_returns_json_404_instead_of_frontend() {
     assert_eq!(envelope["code"], "extension_route_not_found");
 }
 
-/// 未内嵌的资源路径不能回退成 HTML，否则前端会拿到 200 的空壳页面。
+/// 未内嵌的资源路径不能回退成 HTML，否则客户端会拿到 200 的空壳页面。
 #[tokio::test]
-async fn missing_frontend_asset_returns_404() {
+async fn missing_web_ui_asset_returns_404() {
     let runtime = runtime(Arc::new(immediate_llm())).await;
     let app = router(runtime).unwrap();
 

@@ -1,5 +1,0 @@
-dist/
-node_modules/
-target/
-package-lock.json
-src/services/generated/

@@ -92,7 +92,7 @@ AstrCode 当前 workspace 有 31 个成员，全部位于 `crates/` 下。
 
 依赖边界：只依赖 `astrcode-core`。由于这里是 wire 类型，`serde(rename_all = "camelCase")` 等序列化规则应集中在这里。
 
-测试线索：`framing.rs`、`commands.rs`、`events.rs`、`http.rs`、`version.rs`、`agent_session_link.rs` 有协议转换和序列化相关单元测试。修改字段名或 enum variant 需要同步前端/API 兼容性检查。
+测试线索：`framing.rs`、`commands.rs`、`events.rs`、`http.rs`、`version.rs`、`agent_session_link.rs` 有协议转换和序列化相关单元测试。修改字段名或 enum variant 需要同步更新 `fixtures/` 与 `src/http/tests.rs` 的契约测试。
 
 ## `astrcode-ai`
 
@@ -132,7 +132,7 @@ AstrCode 当前 workspace 有 31 个成员，全部位于 `crates/` 下。
   `SessionStore` 组合完整 repository 所需的生命周期和 compact snapshot 能力。
 - `in_memory`：`testing` feature 下的内存存储，供测试使用。
 
-依赖边界：依赖 `astrcode-core` 和 `astrcode-session-projection`；不依赖 session/server。按“右侧可以依赖左侧”表示，运行时主方向为 `core → session-projection → storage → session → server`；协议支线为 `core → protocol → server` 和 `protocol → frontend`，`context → session`、`extension-sdk → session` 是另外两条显式输入边。
+依赖边界：依赖 `astrcode-core` 和 `astrcode-session-projection`；不依赖 session/server。按“右侧可以依赖左侧”表示，运行时主方向为 `core → session-projection → storage → session → server`；协议支线为 `core → protocol → server` 和 `protocol → ui`，`context → session`、`extension-sdk → session` 是另外两条显式输入边。
 
 测试线索：`event_log/tests.rs`、`session_repo/tests.rs` 和 `in_memory/tests.rs` 覆盖日志校验、尾部恢复、projection 恢复与并发追加；`tool_artifacts.rs` 有模块内测试。任何事件 payload 或持久化格式变更都应同时验证 replay 和 session repository。
 

@@ -1,0 +1,18 @@
+[package]
+name = "astrcode-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "宿主无关的 UI 层：协议客户端、会话状态与 gpui-kit 视图，由桌面 App 与 Web UI 共用"
+
+[dependencies]
+gpui-kit = "0.7.0"
+astrcode-core = { path = "../astrcode-core" }
+astrcode-protocol = { path = "../astrcode-protocol" }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+futures-util = { workspace = true, features = ["io"] }
+url = { workspace = true }

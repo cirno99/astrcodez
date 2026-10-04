@@ -61,11 +61,23 @@ pub(in crate::http) async fn create_session(
         Ok(selection) => selection,
         Err(message) => return bad_request_response("invalid_tool_selection", message),
     };
-    tracing::info!(working_dir = %request.working_dir, "POST /api/sessions — create_session");
+    // 浏览器宿主无从得知服务端 cwd，只能交空串；空串按服务端启动目录解析，
+    // 与 `active_session_working_dir` 在没有 focus 会话时的取值一致。
+    let working_dir = if request.working_dir.is_empty() {
+        state
+            .app
+            .runtime()
+            .startup_working_dir()
+            .display()
+            .to_string()
+    } else {
+        request.working_dir
+    };
+    tracing::info!(%working_dir, "POST /api/sessions — create_session");
     match state
         .app
         .session_commands()
-        .create_session(request.working_dir, tool_selection)
+        .create_session(working_dir, tool_selection)
         .await
     {
         Ok(session_id) => {

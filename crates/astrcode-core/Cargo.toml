@@ -18,9 +18,18 @@ async-trait = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 astrcode-paths = { path = "../astrcode-paths" }
+tokio-util = { workspace = true }
+
+# 文件锁只在有文件系统的宿主上成立。
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
 fs2 = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "rt-multi-thread", "macros"] }
-tokio-util = { workspace = true }
+
+# 浏览器既没有操作系统熵源（uuid 走 crypto.getRandomValues），
+# tokio 也只支持 sync/macros/io-util/rt/time，多线程运行时不存在。
+[target.'cfg(target_family = "wasm")'.dependencies]
+uuid = { workspace = true, features = ["js"] }
+tokio = { workspace = true, features = ["sync", "time", "macros"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true }

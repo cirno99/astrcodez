@@ -19,8 +19,8 @@ use super::{
     HttpState,
     auth::collect_allowed_origins,
     conversation_timeline::EventLogConversationTimeline,
-    routes::{config, event_consumers, extensions, lifecycle, models, sessions},
-    stream,
+    routes::{config, event_consumers, extensions, lifecycle, models, preferences, sessions},
+    stream, webui_assets,
 };
 use crate::{bootstrap::ServerApp, server_event_bus::ServerEventBus};
 
@@ -129,6 +129,10 @@ fn router_parts(server_app: Arc<ServerApp>) -> RouterParts {
         .route("/api/sessions/{id}/fork", post(sessions::fork_session))
         .route("/api/sessions/{id}", delete(sessions::delete_session))
         .route("/api/projects", delete(sessions::delete_project))
+        .route(
+            "/api/preferences",
+            get(preferences::get_ui_preferences).put(preferences::update_ui_preferences),
+        )
         .route("/api/config", get(config::get_config))
         .route(
             "/api/config/provider-catalog",
@@ -176,9 +180,17 @@ fn router_parts(server_app: Arc<ServerApp>) -> RouterParts {
         .layer(DefaultBodyLimit::max(
             astrcode_extension_sdk::extension::MAX_EXTENSION_HTTP_BODY_BYTES,
         ));
+    // Web UI 挂在站点根路径，由公开扩展路由的兜底派发；`/app` 是桌面 App 之前的挂载点，
+    // 保留为 308 跳转。
+    let legacy_web_ui_mount = Router::new()
+        .route("/app", get(webui_assets::redirect_legacy_mount))
+        // 目录形式要单独注册：`{*path}` 不匹配空前缀，`/app/` 落不到它上面。
+        .route("/app/", get(webui_assets::redirect_legacy_mount))
+        .route("/app/{*path}", get(webui_assets::redirect_legacy_mount));
     let app = Router::new()
         .merge(management_api)
         .merge(public_extension_http)
+        .merge(legacy_web_ui_mount)
         .layer(cors)
         .with_state(state);
 
@@ -196,23 +208,44 @@ pub async fn run_http_server(
             "HTTP server has no authentication and is binding to a non-loopback address"
         );
     }
-    server_app.initialize().await;
-    let shutdown_token = server_app.runtime().shutdown_token().clone();
-    let app = router(Arc::clone(&server_app))?;
-
     let listener = tokio::net::TcpListener::bind(addr).await.map_err(|error| {
         tracing::error!("failed to bind HTTP server at {addr}: {error}");
         HttpServerError::Io(error)
     })?;
-    let local_addr = listener.local_addr()?;
-    let local_port = local_addr.port();
+    let local_port = listener.local_addr()?.port();
     write_run_info(local_port);
-    if super::static_assets::is_placeholder() {
+    if !super::webui_assets::has_wasm_artifact() {
         tracing::warn!(
-            "embedded frontend is a placeholder; run `cd frontend && npm run build` and rebuild \
-             astrcode-server to serve the web UI"
+            "embedded Web UI has no wasm artifact; run `scripts/build.sh` and rebuild \
+             astrcode-server to serve it"
         );
     }
+    let result = serve_http(server_app, listener).await;
+    remove_run_info_if_current(local_port);
+    result
+}
+
+/// 在调用方已绑定的 listener 上运行 HTTP 服务，不写 `run.json`。
+///
+/// 供嵌入本 server 的进程（桌面 App）使用：调用方自己绑定 `127.0.0.1:0`，因此在调用
+/// 本函数前就已知实际端口。`run.json` 是给外部发现者用的记录，嵌入方不需要它，写它
+/// 反而会覆盖同机 `astrcode server` 的端口。
+pub async fn run_http_server_with_listener(
+    server_app: Arc<ServerApp>,
+    listener: tokio::net::TcpListener,
+) -> Result<(), HttpServerError> {
+    serve_http(server_app, listener).await
+}
+
+async fn serve_http(
+    server_app: Arc<ServerApp>,
+    listener: tokio::net::TcpListener,
+) -> Result<(), HttpServerError> {
+    server_app.initialize().await;
+    let shutdown_token = server_app.runtime().shutdown_token().clone();
+    let app = router(Arc::clone(&server_app))?;
+
+    let local_addr = listener.local_addr()?;
     tracing::info!("HTTP server ready at http://{local_addr}");
     let result = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
@@ -221,12 +254,12 @@ pub async fn run_http_server(
         })
         .await;
     server_app.shutdown().await;
-    remove_run_info_if_current(local_port);
     result?;
     Ok(())
 }
 
-/// 将运行时端口写入 `~/.astrcode/run.json`，供前端 dev server 发现后端地址。
+
+/// 将运行时端口写入 `~/.astrcode/run.json`，供外部客户端（`astrcode-eval`、CLI）发现后端地址。
 fn write_run_info(port: u16) {
     let dir = astrcode_core::config::defaults::astrcode_dir();
     if let Err(e) = std::fs::create_dir_all(&dir) {

@@ -20,14 +20,14 @@ use axum::{
     Json,
     body::Bytes,
     extract::{OriginalUri, Path, State},
-    http::{Method, StatusCode},
+    http::{HeaderMap, Method, StatusCode, header},
     response::{IntoResponse, Response},
 };
 
 use super::{
     super::{
         HttpState, bad_request_response, error_response, internal_error_response,
-        not_found_response, static_assets,
+        not_found_response, webui_assets,
     },
     ConfigRequestError, reload_extension_registry, update_config,
 };
@@ -89,6 +89,7 @@ pub(in crate::http) async fn dispatch_public_http(
     State(state): State<HttpState>,
     method: Method,
     OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     let Some(extension_method) = extension_http_method(&method) else {
@@ -108,11 +109,14 @@ pub(in crate::http) async fn dispatch_public_http(
         .dispatch_public_http_route(request, &body)
         .await;
 
-    // 扩展的公共路由可以注册在任意路径，必须排在内嵌前端之前派发；只有扩展未命中
-    // 时才回退到前端产物。`/api` 下的未知路径不会命中内嵌条目，仍得到 JSON 404。
+    // 扩展的公共路由可以注册在任意路径，必须排在 Web UI 产物之前派发；只有扩展未命中
+    // 时才回退到产物。`/api` 下的未知路径不会命中内嵌条目，仍得到 JSON 404。
+    let if_none_match = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok());
     if method == Method::GET
         && matches!(result, Ok(ExtensionHttpDispatchResult::NotFound))
-        && let Some(response) = static_assets::serve(uri.path())
+        && let Some(response) = webui_assets::serve(uri.path(), if_none_match)
     {
         return response;
     }

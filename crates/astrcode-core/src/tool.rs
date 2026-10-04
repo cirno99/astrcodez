@@ -319,12 +319,12 @@ impl ToolResult {
     }
 }
 
-/// `ToolResult.metadata` 中呈现 intent 的键。前端按此键拾取 intent。
+/// `ToolResult.metadata` 中呈现 intent 的键。UI 按此键拾取 intent。
 pub const PRESENTATION_METADATA_KEY: &str = "presentation";
 
 /// 工具结果的呈现 intent。
 ///
-/// 每个变体对应 UI 的一种内置渲染（与前端注册表中的渲染种类一一对应），
+/// 每个变体对应 UI 的一种内置渲染（与渲染注册表中的渲染种类一一对应），
 /// 序列化为 snake_case 字符串。未知字符串由消费方按未声明处理，保证向前兼容。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

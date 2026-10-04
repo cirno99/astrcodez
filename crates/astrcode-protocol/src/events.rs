@@ -126,7 +126,6 @@ pub struct MessageDto {
 pub use crate::http::SlashCommandInfoDto;
 
 /// 插件注册的快捷键绑定。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KeybindingDto {

@@ -19,10 +19,10 @@ mod conversation_timeline;
 mod projection;
 mod routes;
 mod server;
-mod static_assets;
 mod stream;
+mod webui_assets;
 
-pub use server::{HttpServerError, router, run_http_server};
+pub use server::{HttpServerError, router, run_http_server, run_http_server_with_listener};
 
 /// HTTP router shared state.
 #[derive(Clone)]

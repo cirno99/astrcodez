@@ -95,7 +95,4 @@ for path in [
     path.write_text("".join(output))
 PY
 
-# Keep frontend package metadata and its lockfile in sync through npm.
-npm version "${VERSION}" --no-git-tag-version --prefix frontend
-
 echo "Bumped release metadata from ${OLD} to ${VERSION}"

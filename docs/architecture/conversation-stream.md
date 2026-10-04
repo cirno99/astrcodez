@@ -7,9 +7,9 @@ session truth:
 EventLog / live EventPayload
   → server conversation projection
   → ConversationStreamEnvelopeDto
-  → frame-bounded frontend delta buffer
+  → UI delta buffer
   → pure conversation reducer
-  → virtualized render model
+  → render model
 ```
 
 ## Ownership boundaries
@@ -18,15 +18,16 @@ EventLog / live EventPayload
 - `astrcode-server::http::projection` maps those facts at the HTTP boundary.
 - `astrcode-protocol` owns snapshot, block, delta, cursor, and envelope wire
   contracts.
-- `frontend/src/services/protocol.ts` validates unknown JSON and maps wire DTOs
-  into frontend domain types.
-- `frontend/src/store/delta` owns lossless batching and pure state reduction.
-- React components receive already-projected conversation blocks and do not
-  reconstruct backend state.
+- `astrcode-ui::conversation` owns the delta buffer, order-preserving
+  coalescing, and pure state reduction. It does not depend on gpui, so it is
+  testable without a window or a GPU.
+- `astrcode-gui` and `astrcode-webui` are the two hosts of that shared layer.
+  Both render already-projected conversation blocks and do not reconstruct
+  backend state.
 
-The shared fixtures in `crates/astrcode-protocol/fixtures` are consumed by both
-Rust and frontend contract tests. Any wire change must update the generated
-TypeScript bindings, the fixture, and both sides of the contract test.
+The shared fixtures in `crates/astrcode-protocol/fixtures` are consumed by the
+Rust contract tests in `crates/astrcode-protocol/src/http/tests.rs`. Any wire
+change must update the fixture and the contract test together.
 
 ## Snapshot and cursor invariants
 
@@ -46,47 +47,35 @@ TypeScript bindings, the fixture, and both sides of the contract test.
 8. Applying replay followed by live deltas must converge to the same visible
    state as fetching a fresh snapshot.
 
-## Frontend frame policy
+## Delta buffering
 
-Incoming streaming fragments are accumulated until the next animation frame.
-The buffer:
+Deltas are accumulated and their memory bounded by a delta-count and text-size
+budget. The buffer:
 
-- keeps the newest cursor for the complete frame;
-- flushes without dropping data when its delta-count or text-size budget is
-  reached;
-- hands the drained frame to the reducer, which is the single owner of
-  order-preserving delta coalescing;
-- performs one Zustand update for each reduced frame;
-- runs refresh, rehydrate, and session-navigation effects after pure reduction.
+- keeps the newest cursor for the batch it hands over;
+- flushes without dropping data when either budget is reached;
+- hands the drained batch to the reducer, which is the single owner of
+  order-preserving delta coalescing.
 
-The size limit is a memory bound, not backpressure sent to the server. A limit
-hit may cause an additional state update within one display frame, but still
-avoids per-token rendering.
+There is no per-animation-frame flush. gpui already provides an entity
+notification cadence, so the shared layer keeps only the buffer and its memory
+bound and lets the host drive redraws (ADR 0001, round 13).
+
+The size limit is a memory bound, not backpressure sent to the server.
 
 ## Rendering policy
 
-- The message list virtualizes rows and keeps only the visible window mounted.
-- Unchanged conversation block object references are preserved by the reducer.
-- Live Markdown renders only a safe committed prefix; the unfinished tail stays
-  plain text.
-- The Markdown parser, settings UI, and plugins UI are loaded on demand.
-- Tool details remain unmounted while collapsed.
-
-## Performance profiling
-
-Run:
-
-```bash
-cd frontend
-npm run profile:conversation
-```
-
-The profile reduces 4,000 streaming fragments against a 10,000-block history
-and reports median, p95, and maximum reducer time. It also verifies that the
-active block is complete and unchanged history blocks preserve object identity.
-
-Timing is diagnostic rather than a CI pass/fail threshold because developer and
-CI hardware differ. Correctness invariants remain part of `npm run check`.
+- User and assistant bodies render through per-block Markdown state keyed by
+  block id. A block's state lives exactly as long as the block does.
+- Appending to a block degrades to an append in the Markdown state rather than
+  re-parsing the whole document, so streaming does not cost the full body per
+  delta.
+- Tool details stay hidden until expanded, and collapsed regions are forced
+  open while they hold a pending decision.
+- Per-frame render cost scales with the bytes rendered, not with the held
+  history. The measured budgets, and the three conditions that make streaming
+  redraws viable, are recorded in [ADR 0001](adr/0001-replace-web-frontend-with-gpui-kit.md)
+  under the cadence spike conclusion.
 
 ## Change checklist
 
@@ -98,4 +87,5 @@ When changing conversation events or rendering:
 3. Update live projection, replay projection, and snapshot projection together.
 4. Extend the shared reducer fixture.
 5. Verify reconnect, rehydrate, compact continuation, and child-session routing.
-6. Run the frontend profile and compare the reported baseline.
+6. Check whether the change moves per-frame render cost, and compare against the
+   budget recorded in the ADR cadence spike conclusion.

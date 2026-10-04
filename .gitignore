@@ -10,9 +10,8 @@
 # 本地一次性分析产物(AI agent 工作稿等)
 /artifacts/
 
-# Frontend (node)
-node_modules/
-/frontend/dist/
+# Web UI 的 wasm 产物由 `scripts/build.sh` 生成
+/crates/astrcode-webui/www/wasm/
 
 # Python (sdks/python)
 __pycache__/
@@ -62,3 +61,5 @@ Desktop.ini
 target/
 
 plugins/
+
+/.consult/

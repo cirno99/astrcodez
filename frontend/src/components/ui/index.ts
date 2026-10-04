@@ -1,7 +1,0 @@
-export { Button } from './Button'
-export { Dropdown } from './Dropdown'
-export { Icon, type IconName } from './Icon'
-export { IconButton } from './IconButton'
-export { Input } from './Input'
-export { Modal } from './Modal'
-export { Pill } from './Pill'

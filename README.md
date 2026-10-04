@@ -11,7 +11,7 @@
 
 A Rust-built AI coding agent platform.
 
-AstrCode is a full-stack AI coding assistant with a Rust workspace and a React + TypeScript frontend. It features an agent loop with tool execution, a streaming SSE-based multi-provider LLM layer (Anthropic and OpenAI-compatible providers), typed authoring APIs for bundled and disk IPC subprocess extensions, background pre-warm, health checks, and a startup event channel, a persistent MCP process pool (reusing long-lived connections across turns), built-in web search and URL fetch tools, context window management with auto-compaction, an eval framework for automated benchmarking, and multiple interfaces: a Web frontend, HTTP/SSE API, and ACP (Agent Client Protocol) adapter.
+AstrCode is an AI coding assistant platform built entirely in Rust, with a GPUI desktop app, a browser UI, and a CLI. It features an agent loop with tool execution, a streaming SSE-based multi-provider LLM layer (Anthropic and OpenAI-compatible providers), typed authoring APIs for bundled and disk IPC subprocess extensions, background pre-warm, health checks, and a startup event channel, a persistent MCP process pool (reusing long-lived connections across turns), built-in web search and URL fetch tools, context window management with auto-compaction, an eval framework for automated benchmarking, and multiple interfaces: a desktop app, a browser UI, HTTP/SSE API, and an ACP (Agent Client Protocol) adapter.
 
 ## Table of Contents
 
@@ -245,8 +245,8 @@ cargo run -- exec "explain the agent loop architecture"
 # HTTP/SSE server
 cargo run -- server
 
-# Web frontend (dev server)
-cd frontend && npm ci && npm run dev
+# Build the browser UI (wasm) and embed it into the server binary
+scripts/build.sh
 
 # Eval framework (requires dev-mode feature)
 cargo run --features dev-mode -- eval
@@ -270,8 +270,8 @@ For detailed configuration documentation, see [Configuration Guide](docs/configu
 
 ```
           ┌──────────────────────┐  ┌───────────┐
-          │     Web Frontend     │  │ ACP Client│
-          │ React 19 + TypeScript│  │  (stdio)  │
+          │       Web UI         │  │ ACP Client│
+          │  gpui + WebAssembly  │  │  (stdio)  │
           └───────────┬──────────┘  └─────┬─────┘
                       │ SSE / JSON-RPC    │ ACP JSON-RPC
                       │                   │ over stdio
@@ -480,8 +480,7 @@ Stable sections (Identity, System, Task Guidelines) come first to leverage promp
 | **Server** | `cargo run -- server [--addr 0.0.0.0:3847]` | HTTP/SSE server with JSON-RPC, session management, real-time event streaming |
 | **ACP** | `cargo run -- acp` | ACP stdio adapter for IDE/editor integration |
 | **Eval** | `cargo run --features dev-mode -- eval` | Run evaluation benchmarks (requires `dev-mode` feature) |
-| **Web** | `cargo run -- server`, then open `http://127.0.0.1:3847` | Browser chat interface; frontend assets are embedded at compile time |
-| **Web (dev)** | `cd frontend && npm run dev` | Vite dev server with hot reload, connected to the server via SSE |
+| **Web** | `scripts/build.sh`, then open `http://127.0.0.1:3847` | Browser UI; assets are embedded into the binary at compile time |
 
 ## Further Reading
 
@@ -497,7 +496,6 @@ Stable sections (Identity, System, Task Guidelines) come first to leverage promp
 | [Architecture: Unified Extension Tool Runtime](docs/architecture/unified-extension-tool-runtime.md) | Unified extension tool runtime boundaries and migration notes |
 | [Architecture: S5R 3.0 Implementation](docs/architecture/s5r-3-implementation.md) | S5R 3.0 implementation decisions and status |
 | [Release Guide](docs/release.md) | Version sync, release workflows, and npm/GitHub distribution |
-| [TODO](docs/TODO.md) | Project roadmap and pending items |
 
 ## Distribution
 

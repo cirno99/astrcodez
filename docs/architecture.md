@@ -1,6 +1,6 @@
 # AstrCode 架构设计
 
-Rust 实现的 AI coding agent，由 `crates/` 下 31 个 crate 组成，支持 Web 前端、Headless exec 和 ACP 三种前端。
+Rust 实现的 AI coding agent，由 `crates/` 下 33 个 crate 组成，支持桌面 App、浏览器 UI、Headless exec 和 ACP 四种前端。
 
 核心判断：**EventLog 是事实，SessionReadModel 是投影，Agent 是无状态运行时。**
 
@@ -48,7 +48,7 @@ Session::emit_durable / Session::emit_live
 `ServerEventBus` 不写 EventLog，只做"session broadcast → 客户端通知"的桥接。
 broadcast 发生 lag 时，forwarder 主动推送 `SessionResumed` 快照触发客户端 rehydrate。
 
-Conversation snapshot、cursor、SSE replay、前端逐帧归并和虚拟化渲染的完整契约见
+Conversation snapshot、cursor、SSE replay、客户端增量归并与渲染的完整契约见
 [Conversation stream contract](architecture/conversation-stream.md)。
 
 ### 事件日志格式
@@ -293,13 +293,12 @@ turn hooks 和 session operations。工具与 prompt 通过 generation 组成一
 借鉴 OpenCode 的架构：
 
 - **后端**：`astrcode-server` 提供 HTTP/SSE API（Axum），JSON-RPC 2.0 协议
-- **前端**：可以是 Web 浏览器、ACP 客户端，或无头 `exec`（`astrcode-cli`）
+- **前端**：可以是桌面 App（`astrcode-gui`）、Web 浏览器（`astrcode-webui`）、ACP 客户端，或无头 `exec`（`astrcode-cli`）
 - HTTP 模块已拆分为 `http/` 子模块：`routes/`（REST 路由）、`projection/`（事件投影）、`stream.rs`（SSE）、`auth.rs`（认证）
 - 路由：sessions CRUD、prompt 提交、compact、abort、fork、SSE 事件流
 - SSE 流携带 `cursor`（event seq），客户端断连后可从 cursor 恢复
 - broadcast channel 溢出时发送 `RehydrateRequired` delta，通知客户端重新拉取 snapshot
-- 前端在动画帧边界无损归并流式 delta；缓冲达到数量或文本预算时提前 flush，不丢事件
-- Settings、Plugins 和 Markdown parser 按行为边界延迟加载，聊天主路径保持轻量
+- 客户端无损归并流式 delta；缓冲达到数量或文本预算时提前 flush，不丢事件
 
 ### 传输层
 
@@ -309,10 +308,11 @@ turn hooks 和 session operations。工具与 prompt 通过 generation 组成一
 
 ### Web GUI
 
-- **部署方式**：前端产物在编译期内嵌进 `astrcode-server`，启动后直接访问 `http://127.0.0.1:3847`
+- **部署方式**：Web UI 产物在编译期内嵌进 `astrcode-server`，启动后直接访问 `http://127.0.0.1:3847`
 - **通信方式**：同源 HTTP API + SSE
-- **技术栈**：React 19 + TypeScript + Tailwind CSS v4
-- **状态管理**：Zustand
+- **技术栈**：`astrcode-ui` 共享层 + gpui-kit，由 `astrcode-webui` 编到 `wasm32-unknown-unknown`，产物由 `scripts/build.sh` 生成
+- **状态管理**：`astrcode-ui::conversation` 的纯状态层，宿主只负责驱动重绘
+- **桌面宿主**：`astrcode-gui` 与 `astrcode-webui` 共用 `astrcode-ui`，差别只在宿主注入（HTTP 客户端、`working_dir`）
 
 ---
 
@@ -332,4 +332,4 @@ Session 是唯一的持久事实来源。所有状态变化都以不可变事件
 
 ### 前后端分离
 
-前端不负责业务逻辑，只负责交互和渲染。后端通过 HTTP/SSE 提供标准化 API，支持多种前端形态（Web/Headless）。
+前端不负责业务逻辑，只负责交互和渲染。后端通过 HTTP/SSE 提供标准化 API，支持多种前端形态（桌面/浏览器/Headless）。

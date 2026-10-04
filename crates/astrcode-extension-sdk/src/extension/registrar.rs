@@ -1064,7 +1064,7 @@ pub struct Keybinding {
 
 /// Status bar item registered by an extension.
 ///
-/// Shown in the frontend status bar. Extensions can dynamically update its
+/// Shown in the UI status bar. Extensions can dynamically update its
 /// content through `StatusItemUpdate` notifications.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusItem {

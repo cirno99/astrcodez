@@ -14,6 +14,7 @@ pub mod testing;
 pub(crate) mod tool_artifacts;
 mod traits;
 mod types;
+pub mod ui_preferences;
 
 #[cfg(test)]
 mod test_support;

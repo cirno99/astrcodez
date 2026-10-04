@@ -6,8 +6,6 @@ pub use crate::wire::AgentSessionStatusDto;
 use crate::wire::PhaseDto;
 
 /// 完整的子 Agent 会话链接，用于 snapshot 基线。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
-#[cfg_attr(feature = "typescript", ts(optional_fields))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentSessionLinkDto {
@@ -26,8 +24,6 @@ pub struct AgentSessionLinkDto {
 }
 
 /// 子 Agent 会话的合法增量。每个 variant 只携带该事件能够改变的字段。
-#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
-#[cfg_attr(feature = "typescript", ts(optional_fields))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(
     tag = "kind",

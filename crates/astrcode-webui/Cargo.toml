@@ -1,0 +1,18 @@
+[package]
+name = "astrcode-webui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "浏览器宿主：在页面 origin 上驱动 astrcode-ui 并产出 wasm 产物"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+gpui-kit = "0.7.0"
+astrcode-ui = { path = "../astrcode-ui" }
+# 与 `wasm-bindgen` CLI 严格同版本：cli 拒绝处理版本不一致的产物。
+wasm-bindgen = "=0.2.129"
+log = "0.4"
+console_log = "1"
+console_error_panic_hook = "0.1"
