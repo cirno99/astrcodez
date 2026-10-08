@@ -7,7 +7,7 @@ use astrcode_context::{
     CompactSummaryRenderOptions, ContextAssembler, ContextSnapshot,
     compaction::{
         LlmCompactAttempt, append_compact_retained_context, compact_messages_deterministic,
-        compact_messages_with_fallback,
+        compact_messages_with_fallback, compactible_prefix_len,
     },
 };
 use astrcode_core::{
@@ -25,6 +25,7 @@ use astrcode_extension_sdk::{
     },
     runtime_ports::TurnHooks,
 };
+use astrcode_session_projection::SessionReadModel;
 use astrcode_storage::CompactSnapshotInput;
 
 use super::persistence::persist_compaction;
@@ -68,6 +69,29 @@ impl CompactionPipelineOutcome {
 }
 
 impl CompactionPipeline<'_> {
+    /// 落盘本次压缩要取代的 provider 前缀，供产物里的可回溯指针指向。
+    ///
+    /// 任何会改变 provider 视图的 rewrite 都要写：只有 manual 才写会让 auto 产物
+    /// 变成不可还原的一次性损耗。只写前缀而不是整个 provider 视图：保留区此刻仍
+    /// 逐字存在于上下文里，再抄一份会让每份快照按窗口大小重复膨胀。
+    async fn write_source_snapshot(
+        &self,
+        trigger: CompactTrigger,
+        source_model: &SessionReadModel,
+        source_snapshot: &ContextSnapshot,
+        compressed_prefix: &[LlmMessage],
+    ) -> Result<Option<String>, SessionError> {
+        self.session
+            .write_compact_snapshot(CompactSnapshotInput {
+                trigger: trigger.as_str().into(),
+                model_id: source_model.identity.model_id.clone(),
+                working_dir: source_model.identity.working_dir.clone(),
+                system_prompt: Some(source_snapshot.system_prompt.clone()),
+                provider_messages: compressed_prefix.to_vec(),
+            })
+            .await
+    }
+
     /// 运行一次完整 compact，并恰好发出一个 started 与一个 terminal live event。
     pub(crate) async fn run(self) -> CompactionPipelineOutcome {
         let turn_id = self
@@ -138,50 +162,58 @@ impl CompactionPipeline<'_> {
         };
         let source_snapshot = context_snapshot(&source_model);
 
-        let transcript_path = if matches!(self.strategy, CompactStrategy::Manual { .. }) {
-            match self
-                .session
-                .write_compact_snapshot(CompactSnapshotInput {
-                    trigger: trigger.as_str().into(),
-                    model_id: source_model.identity.model_id.clone(),
-                    working_dir: source_model.identity.working_dir.clone(),
-                    system_prompt: Some(source_snapshot.system_prompt.clone()),
-                    provider_messages: source_snapshot
-                        .messages
-                        .iter()
-                        .map(|message| (**message).clone())
-                        .collect(),
-                })
-                .await
-            {
-                Ok(path) => path,
-                Err(error) => {
-                    return CompactionPipelineOutcome::Failed {
-                        error,
-                        llm_attempt: LlmCompactAttempt::NotAttempted,
-                        source_snapshot: Some(Box::new(source_snapshot)),
-                    };
-                },
-            }
-        } else {
-            None
-        };
-
         let context_assembler = &self.context_assembler;
         let keep_recent_turns = self
             .strategy
             .keep_recent_turns()
             .or(context_assembler.settings().compact_keep_recent_turns);
-        let render_options = CompactSummaryRenderOptions {
-            transcript_path,
-            custom_instructions: contributions.instructions.clone(),
-        };
+
         // compact 的摘要输入、durable rewrite 均为按值契约,compaction 路径一次性 deref clone。
         let source_messages: Vec<LlmMessage> = source_snapshot
             .messages
             .iter()
             .map(|message| (**message).clone())
             .collect();
+        // 只有确实存在可压缩前缀才落快照：auto 每个 step 都会重新规划压缩，
+        // 被 NothingToCompact 跳过时不会有产物引用这份快照。
+        // 边界与压缩入口同源，落盘范围才能等于产物标注的覆盖区间。
+        let mut transcript_path = None;
+        if let Some(compressed_prefix_len) =
+            compactible_prefix_len(&source_messages, keep_recent_turns)
+        {
+            match self
+                .write_source_snapshot(
+                    trigger,
+                    &source_model,
+                    &source_snapshot,
+                    &source_messages[..compressed_prefix_len],
+                )
+                .await
+            {
+                Ok(path) => transcript_path = path,
+                Err(error) if matches!(self.strategy, CompactStrategy::Manual { .. }) => {
+                    return CompactionPipelineOutcome::Failed {
+                        error,
+                        llm_attempt: LlmCompactAttempt::NotAttempted,
+                        source_snapshot: Some(Box::new(source_snapshot)),
+                    };
+                },
+                // auto/reactive 的快照只是可回溯线索；写盘失败不应让压缩整体不做，
+                // 否则会把「可继续但无指针」升级成「不压缩并撞 prompt 上限」。
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        trigger = trigger.as_str(),
+                        "compact snapshot write failed; continuing without transcript pointer"
+                    );
+                },
+            }
+        }
+
+        let render_options = CompactSummaryRenderOptions {
+            transcript_path,
+            custom_instructions: contributions.instructions.clone(),
+        };
         let execution = if self.use_llm {
             let max_output_tokens = context_assembler.settings().compact_max_output_tokens;
             compact_messages_with_fallback(
@@ -213,6 +245,7 @@ impl CompactionPipeline<'_> {
             },
         };
 
+        let llm_attempt = execution.llm_attempt;
         let mut compaction = execution.result;
         append_compact_retained_context(
             &mut compaction,
@@ -232,13 +265,19 @@ impl CompactionPipeline<'_> {
         )
         .await;
 
-        if let Err(error) =
-            persist_compaction(self.session, &compaction, &source_snapshot, self.strategy).await
+        if let Err(error) = persist_compaction(
+            self.session,
+            &compaction,
+            &source_snapshot,
+            self.strategy,
+            llm_attempt,
+        )
+        .await
         {
             tracing::warn!(error = %error, "compaction persist failed");
             return CompactionPipelineOutcome::Failed {
                 error,
-                llm_attempt: execution.llm_attempt,
+                llm_attempt,
                 source_snapshot: Some(Box::new(source_snapshot)),
             };
         }
@@ -257,7 +296,7 @@ impl CompactionPipeline<'_> {
 
         CompactionPipelineOutcome::Compacted {
             messages_removed: compaction.messages_removed,
-            llm_attempt: execution.llm_attempt,
+            llm_attempt,
         }
     }
 }

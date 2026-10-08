@@ -224,3 +224,113 @@ fn is_summary_preamble_line(line: &str) -> bool {
         || normalized.eq_ignore_ascii_case("compact summary")
         || normalized.eq_ignore_ascii_case("here's the summary")
 }
+
+/// 第 6 段是 user 消息清单；下标与 `REQUIRED_SUMMARY_SECTIONS` 的声明顺序同源，
+/// 不要在这里另写字面量。
+pub(super) const USER_MESSAGES_SECTION: &str = REQUIRED_SUMMARY_SECTIONS[5];
+
+/// 摘要第 6 段列出的用户消息条目数。
+///
+/// 只数最浅一层的 bullet（`- ` / `* `）或编号（`12.` / `12)`）行；更深的 bullet 是
+/// 上一条的补充说明，不计入，否则靠堆子条目就能伪造覆盖。标题行本身不算条目。
+pub(super) fn listed_user_message_count(summary: &str) -> usize {
+    let mut indents = Vec::new();
+    let mut inside_user_messages = false;
+    for line in summary.lines() {
+        match heading_section(line) {
+            Some(section) => inside_user_messages = section == USER_MESSAGES_SECTION,
+            None if inside_user_messages => {
+                let trimmed = line.trim_start();
+                if is_list_item(trimmed) {
+                    indents.push(line.len() - trimmed.len());
+                }
+            },
+            None => {},
+        }
+    }
+    let Some(shallowest) = indents.iter().min().copied() else {
+        return 0;
+    };
+    indents
+        .into_iter()
+        .filter(|indent| *indent == shallowest)
+        .count()
+}
+
+/// 该行是否是九段契约里的某个标题；只按精确标题前缀识别，正文引用不算。
+fn heading_section(line: &str) -> Option<&'static str> {
+    let trimmed = line.trim_start();
+    REQUIRED_SUMMARY_SECTIONS
+        .iter()
+        .copied()
+        .find(|section| trimmed.starts_with(section))
+}
+
+fn is_list_item(trimmed: &str) -> bool {
+    trimmed.starts_with("- ") || trimmed.starts_with("* ") || is_numbered_item(trimmed)
+}
+
+/// `12. xxx` / `12) xxx` 形态的编号条目。
+fn is_numbered_item(line: &str) -> bool {
+    let digits = line.len()
+        - line
+            .trim_start_matches(|ch: char| ch.is_ascii_digit())
+            .len();
+    if digits == 0 {
+        return false;
+    }
+    let mut rest = line[digits..].chars();
+    matches!(rest.next(), Some('.' | ')')) && matches!(rest.next(), Some(' ' | '\t'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn summary_with_user_messages(body: &str) -> String {
+        format!(
+            "1. Primary Request and Intent:\n   - start\n\n2. Key Technical Concepts:\n   - \
+             x\n\n3. Files and Code Sections:\n   - a.rs\n\n4. Errors and fixes:\n   - none\n\n5. \
+             Problem Solving:\n   - ok\n\n6. All user messages:\n{body}\n7. Pending Tasks:\n   - \
+             review\n\n8. Current Work:\n   - writing\n\n9. Optional Next Step:\n   - none"
+        )
+    }
+
+    fn assert_listed(body: &str, expected: usize) {
+        assert_eq!(
+            listed_user_message_count(&summary_with_user_messages(body)),
+            expected
+        );
+    }
+
+    #[test]
+    fn listed_user_message_counts_bullets_and_numbered_items() {
+        assert_listed(
+            "   - \"帮我把日志接上\" — 用户要求接入日志\n   - \"继续\" — 要求继续既有工作",
+            2,
+        );
+        assert_listed("   1. 第一条\n   2) 第二条\n   3. 第三条", 3);
+    }
+
+    #[test]
+    fn listed_user_message_stops_at_the_next_section() {
+        // 第 7 段之后的 bullet 不能算进用户消息清单。
+        assert_listed("   - 唯一一条", 1);
+    }
+
+    #[test]
+    fn listed_user_message_ignores_deeper_bullets_prose_and_placeholders() {
+        assert_listed("   - 第一条\n     续写说明\n     - 补充", 1);
+        assert_listed("   - 第一条\n     - 该消息的补充说明", 1);
+        assert_listed("   这段散文没有列表标记", 0);
+        assert_listed("   (none)", 0);
+    }
+
+    #[test]
+    fn listed_user_message_returns_zero_without_the_section() {
+        assert_eq!(
+            listed_user_message_count("1. Primary Request and Intent:\n   - x"),
+            0
+        );
+    }
+}

@@ -188,6 +188,7 @@ mod tests {
             post_tokens: 10,
             summary: "summary".into(),
             messages_removed: 3,
+            compressed_message_count: 4,
             summary_messages: vec![LlmMessage::user("summary")],
             retained_messages: Vec::new(),
             transcript_path: None,

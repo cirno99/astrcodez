@@ -3,6 +3,8 @@
 //! Parser 负责校验模型输出；assembler 负责把摘要变成后续 provider request
 //! 能稳定识别的 synthetic user message。
 
+use std::borrow::Cow;
+
 use super::{COMPACT_SUMMARY_END, COMPACT_SUMMARY_MARKER, parse::extract_summary_for_context};
 use crate::CompactSummaryRenderOptions;
 
@@ -14,9 +16,19 @@ const COMPACT_CONTINUATION_INSTRUCTIONS: &str =
      questions. Resume directly: do not acknowledge this summary, do not recap it, and do not \
      preface your response with \"I'll continue\" or similar. Pick up the last task as if the \
      context break never happened.";
+/// 提示行的识别前缀：已持久化的产物靠它被 `strip_compact_transcript_hint` 认出来，
+/// 改这段文字会让旧产物的提示行无法剥离、累积进下一次摘要；path 之后的说明子句可改。
 const COMPACT_TRANSCRIPT_HINT_PREFIX: &str = "If you need specific details from before compaction \
                                               (like exact code snippets, error messages, or \
                                               content you generated), read the full transcript at ";
+const COMPACT_EXTENSION_INSTRUCTIONS_HEADER: &str = "Extension instructions to preserve:";
+
+/// 摘要产物标注的可回溯区间：snapshot 文件里被本摘要取代的头 N 条消息，
+/// 以及紧随其后仍逐字存在于上下文中的 M 条消息。
+pub(super) struct CompactCoverage {
+    pub(super) compressed_messages: usize,
+    pub(super) retained_messages: usize,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct CompactSummaryEnvelope {
@@ -42,6 +54,7 @@ pub(super) fn format_compact_summary(summary: &str) -> String {
 pub(super) fn compact_summary_message_text(
     summary: &str,
     options: &CompactSummaryRenderOptions,
+    coverage: CompactCoverage,
 ) -> String {
     let mut body = vec![
         COMPACT_CONTINUATION_PREAMBLE.to_string(),
@@ -58,13 +71,25 @@ pub(super) fn compact_summary_message_text(
     {
         body.extend([
             String::new(),
-            format!("{COMPACT_TRANSCRIPT_HINT_PREFIX}{path}"),
+            format!(
+                "{COMPACT_TRANSCRIPT_HINT_PREFIX}{path} — it holds the {} message(s) (index 0..) \
+                 that this summary replaced;{}.",
+                coverage.compressed_messages,
+                if coverage.retained_messages == 0 {
+                    " no earlier message is kept verbatim".to_string()
+                } else {
+                    format!(
+                        " the next {} message(s) are still present verbatim below",
+                        coverage.retained_messages
+                    )
+                }
+            ),
         ]);
     }
 
     if !options.custom_instructions.is_empty() {
         body.push(String::new());
-        body.push("Extension instructions to preserve:".to_string());
+        body.push(COMPACT_EXTENSION_INSTRUCTIONS_HEADER.to_string());
         for instruction in &options.custom_instructions {
             body.push(format!("- {instruction}"));
         }
@@ -86,6 +111,7 @@ pub(super) fn parse_compact_summary_message(content: &str) -> Option<CompactSumm
         .unwrap_or(trimmed);
     let body = strip_compact_preamble(body);
     let body = strip_compact_transcript_hint(body);
+    let body = strip_compact_extension_block(&body);
     let summary = body
         .trim_start()
         .strip_prefix("Summary:")
@@ -94,6 +120,22 @@ pub(super) fn parse_compact_summary_message(content: &str) -> Option<CompactSumm
     (!summary.is_empty()).then(|| CompactSummaryEnvelope {
         summary: summary.to_string(),
     })
+}
+
+/// 删除 synthetic 包装里的 extension instructions 块。
+///
+/// 这些指令每次压缩都由 PreCompact 重新贡献；留在取回的摘要正文里会随 incremental
+/// 压缩逐轮重复。块总是渲染在末尾，因此按行定位最后一处标题行即可。
+fn strip_compact_extension_block(body: &str) -> &str {
+    let mut cut = None;
+    let mut offset = 0usize;
+    for line in body.lines() {
+        if line.trim_end() == COMPACT_EXTENSION_INSTRUCTIONS_HEADER {
+            cut = Some(offset);
+        }
+        offset += line.len() + 1;
+    }
+    cut.map_or(body, |index| body[..index].trim_end())
 }
 
 fn strip_compact_preamble(body: &str) -> &str {
@@ -108,19 +150,31 @@ fn strip_compact_preamble(body: &str) -> &str {
         .unwrap_or(stripped)
 }
 
-fn strip_compact_transcript_hint(body: &str) -> &str {
-    let trimmed = body.trim_end();
-    let Some((prefix, last_line)) = trimmed.rsplit_once('\n') else {
-        return trimmed;
+/// 删除 snapshot 提示行。
+///
+/// 该行不一定在正文末尾：extension instructions 会被追加在它之后。按行反向搜索，
+/// 否则旧摘要里的提示行会随每次 incremental 累积进 previous summary。
+fn strip_compact_transcript_hint(body: &str) -> Cow<'_, str> {
+    let lines = body.lines().collect::<Vec<_>>();
+    let Some(index) = lines.iter().rposition(|line| {
+        line.trim_start()
+            .starts_with(COMPACT_TRANSCRIPT_HINT_PREFIX)
+    }) else {
+        return Cow::Borrowed(body);
     };
-    if last_line
-        .trim_start()
-        .starts_with(COMPACT_TRANSCRIPT_HINT_PREFIX)
-    {
-        prefix.trim_end()
-    } else {
-        trimmed
-    }
+    // 提示行前的空行只为分隔它而存在，一并移除。
+    let separator = index
+        .checked_sub(1)
+        .filter(|&previous| lines[previous].trim().is_empty());
+    Cow::Owned(
+        lines
+            .iter()
+            .enumerate()
+            .filter(|(line_index, _)| *line_index != index && Some(*line_index) != separator)
+            .map(|(_, line)| *line)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
 }
 
 /// 摘要进入长期上下文前的最后清理。

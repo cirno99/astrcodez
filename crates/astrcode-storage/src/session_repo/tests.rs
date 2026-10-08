@@ -242,6 +242,9 @@ async fn synced_append_stays_hidden_and_sticky_until_exact_retry_or_reopen() {
                 strategy: CompactStrategy::Manual {
                     keep_recent_turns: None,
                 },
+                compressed_message_count: 1,
+                retained_message_count: 0,
+                llm_generated: Some(true),
             }),
         },
     );

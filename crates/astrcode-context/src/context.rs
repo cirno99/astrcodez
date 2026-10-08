@@ -264,6 +264,9 @@ pub struct CompactResult {
     pub summary: String,
     /// 压缩掉的可见消息数量。
     pub messages_removed: usize,
+    /// 被摘要取代的 provider transcript 前缀条目数（含 synthetic 注入消息）。
+    /// 与 [`Self::messages_removed`] 的差即前缀里的 synthetic 消息数。
+    pub compressed_message_count: usize,
     /// 供 provider 使用的合成上下文消息。
     pub summary_messages: Vec<LlmMessage>,
     /// 保留的可见消息尾部。

@@ -47,6 +47,21 @@ pub(crate) fn prepare_compact_input(messages: &[LlmMessage]) -> PreparedCompactI
     }
 }
 
+/// 本轮 compact 输入里必须被第 6 段逐条复述的 user 消息数。
+///
+/// 与 `normalize_compaction_message` 同源：synthetic 注入与空白正文不会进请求，
+/// 因此不计入覆盖基线；`Tool` 结果虽被渲染成 user 正文，却不属于「用户消息」。
+pub(crate) fn user_messages_to_restate(messages: &[LlmMessage]) -> usize {
+    messages
+        .iter()
+        .filter(|message| {
+            message.role == LlmRole::User
+                && !is_synthetic_context_message(message)
+                && !collapse_compaction_whitespace(&visible_message_text(message)).is_empty()
+        })
+        .count()
+}
+
 /// 把多模态/工具内容降级成摘要模型可读的纯文本。
 pub(crate) fn visible_message_text(message: &LlmMessage) -> String {
     message

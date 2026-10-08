@@ -217,26 +217,35 @@ impl StandardAccumulator {
                     {
                         send_event(tx, LlmEvent::ContentDelta { delta: incremental });
                     }
-                    if let Some(reasoning) = delta
+                    // 同一个 delta 里的 reasoning 与 reasoning_details[].text 往往是同一份
+                    // 内容的两种表示（OpenRouter 风格网关即如此）。两者都推进累加器时，第二个
+                    // 片段起就会把每份内容计两次，表现为思考文本逐 token 双写。
+                    // 因此每个事件只消费一个来源：优先别名字段，缺失才回退 reasoning_details
+                    // （回退分支保留对「只发累积式 reasoning_details」provider 的兼容）。
+                    let reasoning_source = delta
                         .get("reasoning_content")
                         .or_else(|| delta.get("reasoning"))
                         .or_else(|| delta.get("thinking"))
                         .and_then(|value| value.as_str())
-                        && let Some(incremental) = self.reasoning_accumulated.push(reasoning)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                        .or_else(|| {
+                            delta
+                                .get("reasoning_details")
+                                .and_then(|v| v.as_array())
+                                .map(|details| {
+                                    details
+                                        .iter()
+                                        .filter_map(|d| d.get("text").and_then(|t| t.as_str()))
+                                        .collect::<Vec<_>>()
+                                        .join("")
+                                })
+                        })
+                        .filter(|value| !value.is_empty());
+                    if let Some(source) = reasoning_source.as_deref()
+                        && let Some(incremental) = self.reasoning_accumulated.push(source)
                     {
                         send_event(tx, LlmEvent::ThinkingDelta { delta: incremental });
-                    }
-                    // Some providers emit cumulative reasoning_details[].text.
-                    if let Some(details) = delta.get("reasoning_details").and_then(|v| v.as_array())
-                    {
-                        let latest = details
-                            .iter()
-                            .filter_map(|d| d.get("text").and_then(|t| t.as_str()))
-                            .collect::<Vec<_>>()
-                            .join("");
-                        if let Some(incremental) = self.reasoning_accumulated.push(&latest) {
-                            send_event(tx, LlmEvent::ThinkingDelta { delta: incremental });
-                        }
                     }
                     if let Some(tool_calls) = delta["tool_calls"].as_array() {
                         for tc in tool_calls {
@@ -1035,6 +1044,67 @@ mod accumulator_tests {
         assert_eq!(thinking, "The user");
         assert_eq!(content, "说实话，逗人开心");
         assert_eq!(acc.text(), "说实话，逗人开心");
+    }
+
+    #[test]
+    fn chat_stream_does_not_double_count_reasoning_and_reasoning_details() {
+        // cline-pass 这类网关会在同一个 delta 里同时下发 reasoning 与
+        // reasoning_details[].text（内容逐字节相同）。两个来源都喂给同一个累加器时，
+        // 累加器会从第二个片段起放弃去重，产出 " user user asks asks" 式的双写。
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut acc = StandardAccumulator::default();
+
+        for fragment in ["The", " user", " asks", " for", " a", " plan"] {
+            acc.ingest_chat_completion(
+                &serde_json::json!({
+                    "choices": [{"delta": {
+                        "reasoning": fragment,
+                        "reasoning_details": [
+                            {"type": "reasoning.text", "text": fragment, "index": 0}
+                        ]
+                    }}]
+                }),
+                &tx,
+            );
+        }
+
+        let thinking: String = drain_events(&mut rx)
+            .into_iter()
+            .filter_map(|event| match event {
+                LlmEvent::ThinkingDelta { delta } => Some(delta),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(thinking, "The user asks for a plan");
+    }
+
+    #[test]
+    fn chat_stream_falls_back_to_cumulative_reasoning_details_when_alias_absent() {
+        // 回退路径必须保留：只发累积式 reasoning_details 的 provider 仍要去重生效。
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut acc = StandardAccumulator::default();
+
+        for cumulative in ["The", "The user", "The user asks"] {
+            acc.ingest_chat_completion(
+                &serde_json::json!({
+                    "choices": [{"delta": {
+                        "reasoning_details": [
+                            {"type": "reasoning.text", "text": cumulative, "index": 0}
+                        ]
+                    }}]
+                }),
+                &tx,
+            );
+        }
+
+        let thinking: String = drain_events(&mut rx)
+            .into_iter()
+            .filter_map(|event| match event {
+                LlmEvent::ThinkingDelta { delta } => Some(delta),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(thinking, "The user asks");
     }
 
     #[test]

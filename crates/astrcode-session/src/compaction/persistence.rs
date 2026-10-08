@@ -1,6 +1,6 @@
 //! Compact rewrite 的 durable 提交边界。
 
-use astrcode_context::{CompactResult, ContextSnapshot};
+use astrcode_context::{CompactResult, ContextSnapshot, compaction::LlmCompactAttempt};
 use astrcode_core::{compaction::CompactStrategy, event::transcript_prefix_fingerprint};
 use astrcode_storage::StorageError;
 
@@ -12,6 +12,7 @@ pub(crate) async fn persist_compaction(
     compaction: &CompactResult,
     snapshot: &ContextSnapshot,
     strategy: CompactStrategy,
+    llm_attempt: LlmCompactAttempt,
 ) -> Result<(), SessionError> {
     let retained_messages = snapshot
         .retained_transcript_messages(&compaction.retained_messages)
@@ -31,6 +32,7 @@ pub(crate) async fn persist_compaction(
                 snapshot.source_seq,
                 fingerprint,
                 strategy,
+                llm_attempt,
             ),
         )
         .await?;

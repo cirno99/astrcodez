@@ -24,7 +24,9 @@ mod plan;
 mod post_compact;
 mod prompt;
 
-use parse::{CompactParseError, parse_compact_output};
+use parse::{
+    CompactParseError, USER_MESSAGES_SECTION, listed_user_message_count, parse_compact_output,
+};
 use plan::{PreparedCompactInput, visible_message_text};
 pub use post_compact::append_compact_retained_context;
 
@@ -69,6 +71,23 @@ fn compact_messages_with_render_options(
     compact_messages_with_render_options_and_keep(messages, system_prompt, render_options, None)
 }
 
+/// 本次压缩会被摘要取代的 provider 前缀长度，与两个 compact 入口的
+/// `NothingToCompact` 判定同源；`None` 表示这次压缩会直接跳过。
+///
+/// 调用方在落 compact snapshot 之前用它把关，并用它裁剪要落盘的消息：
+/// - auto 每个 step 都会重新规划压缩，被跳过时不该留下无人引用的孤儿快照。
+/// - 快照只含被取代的前缀，边界另算一次就会与产物标注的 `index 0..N` 漂移。
+pub fn compactible_prefix_len(
+    messages: &[LlmMessage],
+    keep_recent_turns: Option<usize>,
+) -> Option<usize> {
+    let keep_start = split_compact_start(messages, keep_recent_turns)?;
+    (!plan::prepare_compact_input(&messages[..keep_start])
+        .messages
+        .is_empty())
+    .then_some(keep_start)
+}
+
 fn compact_messages_with_render_options_and_keep(
     messages: &[LlmMessage],
     system_prompt: Option<&str>,
@@ -82,6 +101,7 @@ fn compact_messages_with_render_options_and_keep(
         parts.retained_messages,
         parts.pre_tokens,
         parts.messages_removed,
+        parts.prefix.len(),
         system_prompt,
         render_options,
     ))
@@ -108,6 +128,10 @@ where
     let mut repair_attempts = 0u8;
     let max_attempts = settings.compact_max_retry_attempts.max(1);
     let mut last_error: Option<CompactError> = None;
+    let mut accepted_summary: Option<String> = None;
+    // 格式合格但覆盖不足的摘要：修复回路用尽后仍提交它，它比 deterministic 模板保留更多事实。
+    let mut best_effort_summary: Option<String> = None;
+    let mut last_coverage_gap: Option<(usize, usize)> = None;
 
     while repair_attempts < max_attempts {
         let Some(message_start) = round_starts.get(ptl_rounds_dropped).copied() else {
@@ -140,14 +164,32 @@ where
         repair_attempts += 1;
         match parse_compact_output(&output) {
             Ok(parsed) => {
-                return Ok(finish_compact_summary(
-                    assemble::sanitize_compact_summary(&parsed.summary),
-                    parts.retained_messages,
-                    parts.pre_tokens,
-                    parts.messages_removed,
-                    system_prompt,
-                    render_options,
-                ));
+                let candidate = assemble::sanitize_compact_summary(&parsed.summary);
+                // 覆盖基线只在整段前缀都进了请求时成立；PTL 丢轮后模型无从复述没收到的消息。
+                let expected_user_messages =
+                    (message_start == 0).then(|| plan::user_messages_to_restate(&parts.prefix));
+                let restated = listed_user_message_count(&candidate);
+                let coverage_gap = expected_user_messages
+                    .filter(|expected| restated < *expected)
+                    .map(|expected| (expected, restated));
+                match coverage_gap {
+                    None => {
+                        accepted_summary = Some(candidate);
+                        break;
+                    },
+                    Some((expected, restated)) => {
+                        last_coverage_gap = Some((expected, restated));
+                        best_effort_summary = Some(candidate);
+                        repair_feedback = Some(format!(
+                            "{USER_MESSAGES_SECTION} listed {restated} entries, but this \
+                             conversation contains {expected} user messages. Give every user \
+                             message its own list item there, keeping the entries already \
+                             inherited from the previous summary."
+                        ));
+                        // 故意不 break：由 `repair_attempts < max_attempts`
+                        // 决定是否还有预算再问一次。
+                    },
+                }
             },
             Err(error) => {
                 repair_feedback = Some(error.to_string());
@@ -156,9 +198,36 @@ where
         }
     }
 
-    Err(last_error.unwrap_or_else(|| {
-        CompactParseError::new("compact response did not contain a summary").into()
-    }))
+    let summary = match accepted_summary {
+        Some(summary) => summary,
+        None => {
+            let summary = best_effort_summary.ok_or_else(|| {
+                last_error.unwrap_or_else(|| {
+                    CompactParseError::new("compact response did not contain a summary").into()
+                })
+            })?;
+            if let Some((expected, restated)) = last_coverage_gap {
+                // 提交这版覆盖不足的 LLM 摘要：缺口由产物里的 snapshot 指针兜住，
+                // 降级成 deterministic 占位符只会丢更多事实。
+                tracing::warn!(
+                    expected,
+                    restated,
+                    "compact summary under-covers user messages after contract repair; committing \
+                     it instead of falling back to the deterministic template"
+                );
+            }
+            summary
+        },
+    };
+    Ok(finish_compact_summary(
+        summary,
+        parts.retained_messages,
+        parts.pre_tokens,
+        parts.messages_removed,
+        parts.prefix.len(),
+        system_prompt,
+        render_options,
+    ))
 }
 
 /// LLM compact + deterministic fallback 的统一入口。
@@ -406,12 +475,17 @@ fn finish_compact_summary(
     retained_messages: Vec<LlmMessage>,
     pre_tokens: usize,
     messages_removed: usize,
+    compressed_message_count: usize,
     system_prompt: Option<&str>,
     render_options: &CompactSummaryRenderOptions,
 ) -> CompactResult {
     let summary_messages = vec![LlmMessage::user(assemble::compact_summary_message_text(
         &summary,
         render_options,
+        assemble::CompactCoverage {
+            compressed_messages: compressed_message_count,
+            retained_messages: retained_messages.len(),
+        },
     ))];
     let post_tokens = crate::token_budget::estimate_request_tokens_with_prompt(
         &[summary_messages.clone(), retained_messages.clone()].concat(),
@@ -423,6 +497,7 @@ fn finish_compact_summary(
         post_tokens,
         summary,
         messages_removed,
+        compressed_message_count,
         summary_messages,
         retained_messages,
         transcript_path: render_options.transcript_path.clone(),
@@ -572,14 +647,42 @@ scratchpad that should not survive
                 transcript_path: Some("C:\\Users\\18794\\.astrcode\\compact.jsonl".into()),
                 custom_instructions: Vec::new(),
             },
+            assemble::CompactCoverage {
+                compressed_messages: 7,
+                retained_messages: 2,
+            },
         );
         assert!(message.starts_with("<compact_summary>\nThis session is being continued"));
         assert!(message.contains("Resume directly: do not acknowledge this summary"));
         assert!(message.contains("read the full transcript at C:\\Users\\18794"));
+        assert!(message.contains("it holds the 7 message(s)"));
+        assert!(message.contains("next 2 message(s) are still present verbatim below"));
         assert_eq!(
             assemble::parse_compact_summary_message(&message)
                 .unwrap()
                 .summary,
+            "1. Primary Request and Intent:\n   keep user intent"
+        );
+    }
+
+    /// snapshot 提示行与 extension instructions 块都排在摘要正文之后：取回 previous
+    /// summary 时必须整块剥掉，否则每次 incremental 都累积陈旧路径与重复指令。
+    #[test]
+    fn parse_compact_summary_message_strips_wrappers_after_summary_body() {
+        let message = assemble::compact_summary_message_text(
+            "1. Primary Request and Intent:\n   keep user intent",
+            &CompactSummaryRenderOptions {
+                transcript_path: Some("/root/.astrcode/compact.jsonl".into()),
+                custom_instructions: vec!["preserve the plan".into()],
+            },
+            assemble::CompactCoverage {
+                compressed_messages: 4,
+                retained_messages: 0,
+            },
+        );
+        let parsed = assemble::parse_compact_summary_message(&message).unwrap();
+        assert_eq!(
+            parsed.summary,
             "1. Primary Request and Intent:\n   keep user intent"
         );
     }
@@ -642,6 +745,10 @@ scratchpad that should not survive
             LlmMessage::user(assemble::compact_summary_message_text(
                 "old compacted work",
                 &CompactSummaryRenderOptions::default(),
+                assemble::CompactCoverage {
+                    compressed_messages: 1,
+                    retained_messages: 3,
+                },
             )),
             LlmMessage::user("old real"),
             LlmMessage::assistant("answer"),
@@ -917,5 +1024,181 @@ scratchpad that should not survive
                 .iter()
                 .any(|message| { visible_message_text(message).contains("round two user") })
         );
+    }
+
+    /// 从共用 fixture 派生一份「第 6 段有 N 条」的摘要，让覆盖校验的用例只差条目数。
+    fn compact_summary_with_user_messages(entries: &[&str]) -> String {
+        let listing = entries
+            .iter()
+            .map(|entry| format!("   - {entry}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        valid_compact_summary().replace("   - user asked for compact", &listing)
+    }
+
+    fn three_turn_transcript() -> Vec<LlmMessage> {
+        vec![
+            LlmMessage::user("第一条用户消息"),
+            LlmMessage::assistant("第一条回复"),
+            LlmMessage::user("第二条用户消息"),
+            LlmMessage::assistant("第二条回复"),
+            LlmMessage::user("最近的用户消息"),
+        ]
+    }
+
+    /// 摘要漏列用户消息时，必须经 `{{CONTRACT_REPAIR}}` 追问一次，而不是静默提交缺条目的产物。
+    #[tokio::test]
+    async fn compact_summary_coverage_gate_repairs_missing_user_messages() {
+        let settings = ContextSettings::default();
+        let attempts = Arc::new(Mutex::new(0usize));
+        let requests = Arc::new(Mutex::new(Vec::<Vec<LlmMessage>>::new()));
+        let attempts_for_request = Arc::clone(&attempts);
+        let requests_for_request = Arc::clone(&requests);
+
+        let result = compact_messages_with_request(
+            &three_turn_transcript(),
+            None,
+            &settings,
+            &[],
+            &CompactSummaryRenderOptions::default(),
+            None,
+            move |request| {
+                requests_for_request.lock().unwrap().push(request);
+                let mut attempts = attempts_for_request.lock().unwrap();
+                *attempts += 1;
+                let entries: &[&str] = if *attempts == 1 {
+                    &["第一条用户消息"]
+                } else {
+                    &["第一条用户消息", "第二条用户消息"]
+                };
+                let summary = compact_summary_with_user_messages(entries);
+                async move { Ok(summary) }
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.compressed_message_count, 4);
+        {
+            let requests = requests.lock().unwrap();
+            assert_eq!(requests.len(), 2, "覆盖不足应触发一次契约修复重试");
+            let repair_request = visible_message_text(requests[1].last().unwrap());
+            assert!(repair_request.contains("## Contract Repair"));
+            assert!(repair_request.contains("conversation contains 2 user messages"));
+        }
+        assert_eq!(listed_user_message_count(&result.summary), 2);
+    }
+
+    /// 修复预算用尽后仍缺口时，提交的必须是这版 LLM 摘要；降级成 deterministic 占位符
+    /// 会丢更多事实，而缺口已由产物里的 snapshot 指针兜住。
+    #[tokio::test]
+    async fn compact_summary_keeps_under_covering_llm_summary_when_repairs_exhaust() {
+        let settings = ContextSettings {
+            compact_max_retry_attempts: 2,
+            ..ContextSettings::default()
+        };
+        let attempts = Arc::new(Mutex::new(0usize));
+        let requests = Arc::new(Mutex::new(Vec::<Vec<LlmMessage>>::new()));
+        let attempts_for_request = Arc::clone(&attempts);
+        let requests_for_request = Arc::clone(&requests);
+
+        let result = compact_messages_with_request(
+            &three_turn_transcript(),
+            None,
+            &settings,
+            &[],
+            &CompactSummaryRenderOptions::default(),
+            None,
+            move |request| {
+                requests_for_request.lock().unwrap().push(request);
+                let mut attempts = attempts_for_request.lock().unwrap();
+                *attempts += 1;
+                let summary = compact_summary_with_user_messages(&["第一条用户消息"]);
+                async move { Ok(summary) }
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(requests.lock().unwrap().len(), 2);
+        assert_eq!(listed_user_message_count(&result.summary), 1);
+        assert!(
+            !result.summary.contains("Compacted 4 earlier messages"),
+            "覆盖不足不得退回 deterministic 模板：{}",
+            result.summary
+        );
+    }
+
+    /// 输入侧基线不含 synthetic 注入；否则每次 auto-compact 都会把注入文本当成
+    /// 一条必须复述的用户消息，门禁永远无法通过。
+    #[test]
+    fn user_messages_to_restate_skips_synthetic_and_tool_bodies() {
+        let messages = vec![
+            LlmMessage::user("真实用户消息"),
+            LlmMessage::assistant("回答"),
+            LlmMessage::user(assemble::compact_summary_message_text(
+                "1. Primary Request and Intent:\n   旧摘要",
+                &CompactSummaryRenderOptions::default(),
+                assemble::CompactCoverage {
+                    compressed_messages: 2,
+                    retained_messages: 1,
+                },
+            )),
+            LlmMessage::tool("read", "call-1", "文件正文", false),
+            LlmMessage::user("   "),
+        ];
+
+        assert_eq!(plan::user_messages_to_restate(&messages), 1);
+    }
+
+    /// 快照落盘范围必须与 compact 入口同源：判为可压却在入口被跳过会让产物缺可回溯
+    /// 指针，判为不可压却实际压缩会留下无人引用的孤儿快照；前缀长度还必须等于产物
+    /// 标注的覆盖条目数，否则指针里的 `index 0..N` 会与实际落盘的条目错位。
+    #[test]
+    fn compactible_prefix_len_matches_compact_skip_and_coverage() {
+        let cases: Vec<(&str, Vec<LlmMessage>, Option<usize>)> = vec![
+            (
+                "多轮可压",
+                vec![
+                    LlmMessage::user("old"),
+                    LlmMessage::assistant("answer"),
+                    LlmMessage::user("recent"),
+                ],
+                None,
+            ),
+            (
+                "只有一轮",
+                vec![LlmMessage::user("only"), LlmMessage::assistant("answer")],
+                None,
+            ),
+            (
+                "仅 synthetic 与 assistant",
+                vec![
+                    LlmMessage::user(COMPACT_SUMMARY_MARKER),
+                    LlmMessage::assistant("answer"),
+                    LlmMessage::user("recent"),
+                ],
+                None,
+            ),
+            ("空 transcript", Vec::new(), None),
+            (
+                "keep_recent_turns 为 0",
+                vec![LlmMessage::user("old"), LlmMessage::assistant("answer")],
+                Some(0),
+            ),
+        ];
+        for (name, messages, keep_recent_turns) in cases {
+            let compacted = compact_messages_with_render_options_and_keep(
+                &messages,
+                None,
+                &CompactSummaryRenderOptions::default(),
+                keep_recent_turns,
+            );
+            assert_eq!(
+                compactible_prefix_len(&messages, keep_recent_turns),
+                compacted.ok().map(|result| result.compressed_message_count),
+                "{name}"
+            );
+        }
     }
 }

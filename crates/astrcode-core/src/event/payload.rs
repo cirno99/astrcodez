@@ -73,6 +73,19 @@ pub struct CompactionDetails {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transcript_path: Option<String>,
     pub strategy: CompactStrategy,
+    /// 被摘要取代的 provider transcript 前缀条目数，等于该次 compact snapshot 文件里
+    /// 的全部 message 行数。`0` 表示该事件写于本字段引入之前（任何压缩必然至少替换
+    /// 1 条消息，因此 0 不是可达的真实值）。
+    #[serde(default)]
+    pub compressed_message_count: usize,
+    /// 摘要之后逐字保留的 provider 消息条目数。`0` 既可能是本次压缩未逐字保留任何
+    /// 消息（`keep_recent_turns = 0`），也可能是旧事件未记录；需要区分时看
+    /// [`Self::compressed_message_count`] 是否非零。
+    #[serde(default)]
+    pub retained_message_count: usize,
+    /// 产物是否由 LLM 生成；`None` 表示旧事件未记录，不能推断为确定性 fallback。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm_generated: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -363,5 +376,43 @@ mod tests {
         );
         failed.as_object_mut().unwrap().remove("metadata");
         assert!(serde_json::from_value::<DurableEventPayload>(failed).is_err());
+    }
+
+    /// 压缩产物元数据是后加的：磁盘上已有事件缺字段必须仍能 replay，且不能把
+    /// 「未记录」读成「LLM 未参与」或「保留 0 条」。
+    #[test]
+    fn compaction_details_replay_legacy_events_without_inventing_facts() {
+        let legacy = serde_json::json!({
+            "type": "transcript_rewritten",
+            "source_seq": 3,
+            "source_fingerprint": "fp",
+            "messages": [],
+            "reason": {
+                "type": "compaction",
+                "trigger": "auto_threshold",
+                "pre_tokens": 100,
+                "post_tokens": 20,
+                "summary": "summary",
+                "strategy": { "type": "auto" }
+            }
+        });
+        let decoded = serde_json::from_value::<DurableEventPayload>(legacy).unwrap();
+        let DurableEventPayload::TranscriptRewritten {
+            reason: TranscriptRewriteReason::Compaction(details),
+            ..
+        } = &decoded
+        else {
+            panic!("expected transcript rewrite");
+        };
+        assert_eq!(details.compressed_message_count, 0);
+        assert_eq!(details.retained_message_count, 0);
+        assert_eq!(details.llm_generated, None);
+
+        // 重新序列化后仍能解码为同一事实：新字段是已知字段且有默认值。
+        let reencoded = serde_json::to_value(&decoded).unwrap();
+        assert_eq!(
+            serde_json::from_value::<DurableEventPayload>(reencoded).unwrap(),
+            decoded
+        );
     }
 }

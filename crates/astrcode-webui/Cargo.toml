@@ -9,7 +9,7 @@ description = "浏览器宿主：在页面 origin 上驱动 astrcode-ui 并产�
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-gpui-kit = "0.7.0"
+gpui-kit = "0.7.1"
 astrcode-ui = { path = "../astrcode-ui" }
 # 与 `wasm-bindgen` CLI 严格同版本：cli 拒绝处理版本不一致的产物。
 wasm-bindgen = "=0.2.129"

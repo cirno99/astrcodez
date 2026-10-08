@@ -10,7 +10,7 @@ name = "astrcode-gui"
 path = "src/main.rs"
 
 [dependencies]
-gpui-kit = "0.7.0"
+gpui-kit = "0.7.1"
 # 原生宿主的 HTTP 客户端：reqwest 实现，自带 tokio 运行时，不外溢到共享 UI 层。
 reqwest_client = { package = "gpui-pre-reqwest-client", version = "0.3.7" }
 astrcode-ui = { path = "../astrcode-ui" }

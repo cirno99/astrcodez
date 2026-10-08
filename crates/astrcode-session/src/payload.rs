@@ -1,6 +1,6 @@
 //! 事件载荷构造。
 
-use astrcode_context::CompactResult;
+use astrcode_context::{CompactResult, compaction::LlmCompactAttempt};
 use astrcode_core::{
     compaction::CompactStrategy,
     event::{
@@ -48,12 +48,16 @@ pub fn system_prompt_configured_payload(
 ///
 /// `source_fingerprint` 是被替换前缀（system prompt + provider 视角消息）的
 /// `transcript_prefix_fingerprint`，提交时 projection 重算不匹配则拒绝写入。
+///
+/// `llm_attempt` 决定产物是 LLM 摘要还是确定性 fallback：两者走同一条 durable 提交
+/// 路径，不记录就无法事后区分低保真产物。
 pub(crate) fn transcript_rewritten_payload(
     compaction: &CompactResult,
     retained_messages: &[TranscriptMessage],
     source_seq: u64,
     source_fingerprint: String,
     strategy: CompactStrategy,
+    llm_attempt: LlmCompactAttempt,
 ) -> DurableEventPayload {
     let trigger = strategy.trigger().as_str().to_owned();
     let messages = compaction
@@ -74,6 +78,9 @@ pub(crate) fn transcript_rewritten_payload(
             summary: compaction.summary.clone(),
             transcript_path: compaction.transcript_path.clone(),
             strategy,
+            compressed_message_count: compaction.compressed_message_count,
+            retained_message_count: retained_messages.len(),
+            llm_generated: Some(matches!(llm_attempt, LlmCompactAttempt::Succeeded)),
         }),
     }
 }
@@ -120,7 +127,7 @@ fn agent_session_final_ids(child_session_id: SessionId) -> (SessionId, SessionId
 
 #[cfg(test)]
 mod tests {
-    use astrcode_context::CompactResult;
+    use astrcode_context::{CompactResult, compaction::LlmCompactAttempt};
     use astrcode_core::{
         compaction::CompactStrategy,
         event::{DurableEventPayload, TranscriptRewriteReason},
@@ -136,6 +143,7 @@ mod tests {
             post_tokens: 20,
             summary: "summary".into(),
             messages_removed: 2,
+            compressed_message_count: 3,
             summary_messages: vec![LlmMessage::user("summary context")],
             retained_messages: vec![LlmMessage::user("retained")],
             transcript_path: Some("compact.jsonl".into()),
@@ -152,6 +160,7 @@ mod tests {
             CompactStrategy::Manual {
                 keep_recent_turns: None,
             },
+            LlmCompactAttempt::Succeeded,
         );
 
         assert!(matches!(
@@ -168,5 +177,42 @@ mod tests {
                 && details.trigger == "manual_command"
                 && details.transcript_path.as_deref() == Some("compact.jsonl")
         ));
+    }
+
+    /// 确定性 fallback 产物必须与 LLM 产物在 durable 事件里可区分，否则低保真
+    /// 压缩会静默替换历史而事件日志看不出差别。
+    #[test]
+    fn transcript_rewrite_records_deterministic_fallback_and_coverage_window() {
+        let compaction = CompactResult {
+            pre_tokens: 100,
+            post_tokens: 20,
+            summary: "summary".into(),
+            messages_removed: 4,
+            compressed_message_count: 6,
+            summary_messages: vec![LlmMessage::user("summary context")],
+            retained_messages: vec![LlmMessage::user("retained")],
+            transcript_path: None,
+        };
+
+        let rewrite = transcript_rewritten_payload(
+            &compaction,
+            &[TranscriptMessage::plain(LlmMessage::user("retained"))],
+            9,
+            "fingerprint".to_owned(),
+            CompactStrategy::Auto,
+            LlmCompactAttempt::Failed,
+        );
+
+        let DurableEventPayload::TranscriptRewritten {
+            reason: TranscriptRewriteReason::Compaction(details),
+            ..
+        } = rewrite
+        else {
+            panic!("expected transcript rewrite");
+        };
+        assert_eq!(details.llm_generated, Some(false));
+        assert_eq!(details.compressed_message_count, 6);
+        assert_eq!(details.retained_message_count, 1);
+        assert_eq!(details.transcript_path, None);
     }
 }

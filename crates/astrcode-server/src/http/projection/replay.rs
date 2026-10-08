@@ -117,6 +117,9 @@ mod tests {
                         strategy: CompactStrategy::Manual {
                             keep_recent_turns: None,
                         },
+                        compressed_message_count: 3,
+                        retained_message_count: 0,
+                        llm_generated: Some(true),
                     }),
                 },
             ),
@@ -199,6 +202,9 @@ mod tests {
                     strategy: CompactStrategy::Manual {
                         keep_recent_turns: None,
                     },
+                    compressed_message_count: 2,
+                    retained_message_count: 0,
+                    llm_generated: None,
                 }),
             },
             DurableEventPayload::SessionForked {

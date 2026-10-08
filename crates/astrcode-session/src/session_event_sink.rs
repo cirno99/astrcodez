@@ -820,6 +820,9 @@ mod tests {
                             strategy: CompactStrategy::Manual {
                                 keep_recent_turns: None,
                             },
+                            compressed_message_count: 4,
+                            retained_message_count: 1,
+                            llm_generated: Some(true),
                         }),
                     },
                 ),

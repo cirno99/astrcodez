@@ -155,6 +155,9 @@ fn prepared_batches_update_in_place_and_validate_rewrites_against_prior_batch_ev
                 strategy: CompactStrategy::Manual {
                     keep_recent_turns: None,
                 },
+                compressed_message_count: 2,
+                retained_message_count: 1,
+                llm_generated: Some(true),
             }),
         },
     );
@@ -218,6 +221,9 @@ fn transcript_rewrite_does_not_change_active_execution_state() {
                         summary: "summary".into(),
                         transcript_path: None,
                         strategy,
+                        compressed_message_count: 2,
+                        retained_message_count: 1,
+                        llm_generated: Some(true),
                     }),
                 },
             ),
@@ -392,6 +398,9 @@ fn projection_builds_complete_grouped_state_and_evolves_transcript() {
                     strategy: CompactStrategy::Manual {
                         keep_recent_turns: None,
                     },
+                    compressed_message_count: 2,
+                    retained_message_count: 1,
+                    llm_generated: Some(true),
                 }),
             },
         ),
@@ -861,6 +870,9 @@ fn projection_rejects_invalid_stream_shapes_without_mutating_valid_state() {
                     strategy: CompactStrategy::Manual {
                         keep_recent_turns: None,
                     },
+                    compressed_message_count: 1,
+                    retained_message_count: 0,
+                    llm_generated: Some(false),
                 }),
             }
         )),
@@ -946,6 +958,9 @@ fn rewrite_event(
                 strategy: CompactStrategy::Manual {
                     keep_recent_turns: None,
                 },
+                compressed_message_count: 1,
+                retained_message_count: 0,
+                llm_generated: Some(true),
             }),
         },
     )
