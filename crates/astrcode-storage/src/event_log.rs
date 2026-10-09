@@ -1014,15 +1014,20 @@ impl EventLog {
         fail_next_open_sync(path);
     }
 
-    /// Project a session-list summary directly from an event log.
+    /// 直接从事件日志投影出会话列表摘要。
+    ///
+    /// 同时返回该摘要**实际覆盖**的字节数,供调用方判定摘要能否落盘复用:只有当日志
+    /// 当前长度与覆盖长度完全相等时,摘要才代表日志的全部内容。覆盖长度取 fsync 确认
+    /// 后的文件长度,未确认的尾部记录既不参与摘要,也不会被算进覆盖范围。
     pub(crate) async fn read_summary(
         path: &Path,
         session_id: astrcode_core::types::SessionId,
-    ) -> Result<Option<SessionSummary>, StorageError> {
+    ) -> Result<Option<(SessionSummary, u64)>, StorageError> {
         let path = path.to_path_buf();
         run_blocking_io(move || {
             let confirmed_len = sync_existing_log(&path)?;
-            read_summary_at_path(&path, session_id, Some(confirmed_len))
+            let summary = read_summary_at_path(&path, session_id, Some(confirmed_len))?;
+            Ok(summary.map(|summary| (summary, confirmed_len)))
         })
         .await
     }

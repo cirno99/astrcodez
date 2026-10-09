@@ -6,12 +6,11 @@
 //!
 //! [`ConversationState`]: super::ConversationState
 
-use std::collections::HashMap;
-
 use astrcode_protocol::{
     http::{ConversationBlockDto, ConversationBlockStatusDto, ConversationDeltaDto},
     wire::ToolOutputStreamDto,
 };
+use rustc_hash::FxHashMap as HashMap;
 
 /// 归并后的增量：块级变更被合并，其余原样保留。
 #[derive(Debug, Clone)]
@@ -225,78 +224,67 @@ fn text_of(block: &ConversationBlockDto) -> &str {
 ///
 /// 目标块不存在时跳过——这是孤儿 patch 不变式：增量只能改已有块，不能凭空造块。
 pub fn apply_block_deltas(blocks: &mut [ConversationBlockDto], coalesced: &[Coalesced]) -> bool {
-    let mut block_index: HashMap<&str, usize> = HashMap::new();
-    let mut tool_call_index: HashMap<&str, usize> = HashMap::new();
-    for (index, block) in blocks.iter().enumerate() {
-        let id = block_id(block);
-        block_index.entry(id).or_insert(index);
-        if matches!(block, ConversationBlockDto::ToolCall { .. }) {
-            tool_call_index.entry(id).or_insert(index);
+    // 索引表借用 `blocks`，所以下标解析整体收敛在一个作用域里：作用域结束后借用归还，
+    // 下面就能直接改写原块，无需先把整块克隆进临时表再回写。
+    let resolved: Vec<(usize, &Coalesced)> = {
+        let mut block_index: HashMap<&str, usize> = HashMap::default();
+        let mut tool_call_index: HashMap<&str, usize> = HashMap::default();
+        for (index, block) in blocks.iter().enumerate() {
+            let id = block_id(block);
+            block_index.entry(id).or_insert(index);
+            if matches!(block, ConversationBlockDto::ToolCall { .. }) {
+                tool_call_index.entry(id).or_insert(index);
+            }
         }
-    }
+        coalesced
+            .iter()
+            .filter_map(|item| {
+                resolve_target(item, &block_index, &tool_call_index).map(|index| (index, item))
+            })
+            .collect()
+    };
 
-    // 同一个块可能被多条增量命中，改动先攒在这里，最后一次性写回。
-    let mut mutations: HashMap<usize, ConversationBlockDto> = HashMap::new();
-
-    for item in coalesced {
+    let mut changed = false;
+    for (index, item) in resolved {
         match item {
-            Coalesced::PatchBlock {
-                block_id,
-                text_delta,
-            } => {
-                let Some(&index) = block_index.get(block_id.as_str()) else {
-                    continue;
-                };
-                let mut target = mutations.get(&index).unwrap_or(&blocks[index]).clone();
-                if let Some(text) = text_field(&mut target) {
+            Coalesced::PatchBlock { text_delta, .. } => {
+                if let Some(text) = text_field(&mut blocks[index]) {
                     text.push_str(text_delta);
-                    mutations.insert(index, target);
+                    changed = true;
                 }
             },
-            Coalesced::ThinkingDelta { block_id, delta } => {
-                let Some(&index) = block_index.get(block_id.as_str()) else {
-                    continue;
-                };
-                let mut target = mutations.get(&index).unwrap_or(&blocks[index]).clone();
+            Coalesced::ThinkingDelta { delta, .. } => {
                 if let ConversationBlockDto::Assistant {
                     reasoning_content, ..
-                } = &mut target
+                } = &mut blocks[index]
                 {
                     reasoning_content
                         .get_or_insert_with(String::new)
                         .push_str(delta);
-                    mutations.insert(index, target);
+                    changed = true;
                 }
             },
             Coalesced::PatchArguments {
-                block_id,
                 arguments,
                 arguments_json,
+                ..
             } => {
-                let Some(&index) = tool_call_index.get(block_id.as_str()) else {
-                    continue;
-                };
                 if arguments.trim().is_empty() {
                     continue;
                 }
-                let mut target = mutations.get(&index).unwrap_or(&blocks[index]).clone();
                 if let ConversationBlockDto::ToolCall {
                     arguments: slot,
                     arguments_json: json_slot,
                     ..
-                } = &mut target
+                } = &mut blocks[index]
                 {
                     slot.clone_from(arguments);
                     *json_slot = arguments_json.clone();
-                    mutations.insert(index, target);
+                    changed = true;
                 }
             },
-            Coalesced::ToolOutput { call_id, parts } => {
-                let Some(&index) = tool_call_index.get(call_id.as_str()) else {
-                    continue;
-                };
-                let mut target = mutations.get(&index).unwrap_or(&blocks[index]).clone();
-                if !matches!(target, ConversationBlockDto::ToolCall { .. }) {
+            Coalesced::ToolOutput { parts, .. } => {
+                if !matches!(blocks[index], ConversationBlockDto::ToolCall { .. }) {
                     continue;
                 }
                 let joined: String = parts
@@ -304,30 +292,38 @@ pub fn apply_block_deltas(blocks: &mut [ConversationBlockDto], coalesced: &[Coal
                     .map(|(stream, delta)| format!("{}{delta}", stream_prefix(*stream)))
                     .collect();
                 // 块本身还没有文本时，去掉首个输出自带的前导换行。
-                let appended = if text_of(&target).is_empty() {
+                let appended = if text_of(&blocks[index]).is_empty() {
                     joined.strip_prefix('\n').unwrap_or(&joined).to_string()
                 } else {
                     joined
                 };
-                if let ConversationBlockDto::ToolCall { text, .. } = &mut target {
+                if let ConversationBlockDto::ToolCall { text, .. } = &mut blocks[index] {
                     text.push_str(&appended);
-                    mutations.insert(index, target);
+                    changed = true;
                 }
             },
             Coalesced::Other(_) => {},
         }
     }
+    changed
+}
 
-    if mutations.is_empty() {
-        return false;
+/// 解析一条增量命中的目标下标；目标块不存在（孤儿 patch）返回 `None`。
+fn resolve_target(
+    item: &Coalesced,
+    block_index: &HashMap<&str, usize>,
+    tool_call_index: &HashMap<&str, usize>,
+) -> Option<usize> {
+    match item {
+        Coalesced::PatchBlock { block_id, .. } | Coalesced::ThinkingDelta { block_id, .. } => {
+            block_index.get(block_id.as_str()).copied()
+        },
+        Coalesced::PatchArguments { block_id, .. } => {
+            tool_call_index.get(block_id.as_str()).copied()
+        },
+        Coalesced::ToolOutput { call_id, .. } => tool_call_index.get(call_id.as_str()).copied(),
+        Coalesced::Other(_) => None,
     }
-
-    let mut ordered: Vec<(usize, ConversationBlockDto)> = mutations.into_iter().collect();
-    ordered.sort_by_key(|(index, _)| *index);
-    for (index, block) in ordered {
-        blocks[index] = block;
-    }
-    true
 }
 
 /// 块的内容是否仍在到来，用于决定是否显示流式标记。

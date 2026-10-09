@@ -9,6 +9,7 @@
 //! - `durability`:fsync 结果不确定时的 sticky 状态机
 //! - `consumer_state`:durable event consumer 状态的读写
 //! - `dir_scan`:项目/会话目录扫描与路径布局
+//! - `summary_cache`:冷会话列举的摘要 sidecar 缓存
 //! - `reader` / `journal` / `store` / `artifacts`:各 trait 端口实现
 
 mod artifacts;
@@ -21,6 +22,7 @@ mod projection;
 mod reader;
 mod session_id;
 mod store;
+mod summary_cache;
 #[cfg(test)]
 mod tests;
 

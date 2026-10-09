@@ -1,6 +1,10 @@
 //! 读端口实现:[`EventReader`] 与 [`SessionReader`]。
 
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use astrcode_core::{
     event::StoredEvent,
@@ -10,11 +14,12 @@ use astrcode_session_projection::{SessionReadModel, SessionSummary, replay};
 use tokio::sync::Semaphore;
 
 use super::{
-    FileSystemSessionRepository, corrupt_projection, parse_cursor, validate_storage_session_id,
+    FileSystemSessionRepository, corrupt_projection, parse_cursor, summary_cache,
+    validate_storage_session_id,
 };
 use crate::{EventReader, SessionReader, StorageError, event_log::EventLog};
 
-/// 冷会话摘要读取的并发上限:每次读取伴随一次 fsync,并发不能无界。
+/// 冷会话摘要读取的并发上限:缓存未命中要扫整条日志并 fsync,并发不能无界。
 const SUMMARY_READ_CONCURRENCY: usize = 8;
 
 #[async_trait::async_trait]
@@ -235,7 +240,7 @@ async fn read_summaries_from_logs(
                 .await
                 .map_err(|_| StorageError::Io(std::io::Error::other("summary read lane closed")))?;
             let log_path = FileSystemSessionRepository::event_log_path(&session_dir, &session_id);
-            EventLog::read_summary(&log_path, session_id).await
+            read_summary_cached(&session_dir, &log_path, session_id).await
         });
     }
 
@@ -256,4 +261,28 @@ async fn read_summaries_from_logs(
         }
     }
     Ok(summaries)
+}
+
+/// 读取冷会话摘要:优先复用 sidecar 缓存,未命中才扫日志并回填缓存。
+///
+/// 命中要求日志当前长度与缓存覆盖长度完全相等。此时的摘要本身是一次已 fsync 确认读取的
+/// 产物,且此后日志没有新增任何字节,因此命中路径不必再确认一遍 durability——它没有重放
+/// 任何未确认记录,只是复述上一次确认读取的结果。
+async fn read_summary_cached(
+    session_dir: &Path,
+    log_path: &Path,
+    session_id: SessionId,
+) -> Result<Option<SessionSummary>, StorageError> {
+    if let Some(log_len) = summary_cache::log_len(log_path).await
+        && let Some(summary) = summary_cache::load(session_dir, &session_id, log_len).await
+    {
+        return Ok(Some(summary));
+    }
+
+    let Some((summary, covered_len)) = EventLog::read_summary(log_path, session_id.clone()).await?
+    else {
+        return Ok(None);
+    };
+    summary_cache::store(session_dir, &summary, covered_len).await;
+    Ok(Some(summary))
 }

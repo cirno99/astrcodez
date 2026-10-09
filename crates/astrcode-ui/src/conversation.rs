@@ -449,6 +449,86 @@ mod tests {
         assert_eq!(state.cursor(), Some("2"));
     }
 
+    /// 同一批里互不归并的增量命中同一个块时必须按序累加，而不是互相覆盖。
+    #[test]
+    fn interleaved_deltas_on_one_block_accumulate_in_order() {
+        use astrcode_protocol::{http::ToolCallStatusDto, wire::ToolOutputStreamDto};
+
+        let mut state = ConversationState::new();
+        state.apply_batch(
+            &[
+                ConversationDeltaDto::AppendBlock {
+                    block: assistant("a", "", true),
+                },
+                ConversationDeltaDto::AppendBlock {
+                    block: ConversationBlockDto::ToolCall {
+                        id: "call-1".into(),
+                        name: "shell".into(),
+                        arguments: String::new(),
+                        text: String::new(),
+                        status: ToolCallStatusDto::Streaming,
+                        metadata: None,
+                        approval: None,
+                        arguments_json: None,
+                    },
+                },
+            ],
+            None,
+        );
+
+        // PatchBlock 与 ThinkingDelta 不互相归并，因此下面 64 条增量仍落在同一个块上。
+        let mut deltas = Vec::new();
+        for step in 0..32 {
+            deltas.push(ConversationDeltaDto::PatchBlock {
+                block_id: "a".into(),
+                text_delta: step.to_string(),
+            });
+            deltas.push(ConversationDeltaDto::ThinkingDelta {
+                block_id: "a".into(),
+                delta: format!("({step})"),
+            });
+        }
+        deltas.push(ConversationDeltaDto::PatchArguments {
+            block_id: "call-1".into(),
+            arguments: "{\"cmd\":\"ls\"}".into(),
+            arguments_json: None,
+        });
+        deltas.push(ConversationDeltaDto::ToolOutput {
+            call_id: "call-1".into(),
+            stream: ToolOutputStreamDto::Stdout,
+            delta: "out".into(),
+        });
+        state.apply_batch(&deltas, None);
+
+        let ConversationBlockDto::Assistant {
+            text,
+            reasoning_content,
+            ..
+        } = &state.blocks()[0]
+        else {
+            panic!("expected an assistant block");
+        };
+        let expected_text: String = (0..32).map(|step| step.to_string()).collect();
+        let expected_thinking: String = (0..32).map(|step| format!("({step})")).collect();
+        assert_eq!(text, expected_text.as_str());
+        assert_eq!(
+            reasoning_content.as_deref(),
+            Some(expected_thinking.as_str())
+        );
+
+        let ConversationBlockDto::ToolCall {
+            arguments,
+            text: output,
+            ..
+        } = &state.blocks()[1]
+        else {
+            panic!("expected a tool call block");
+        };
+        assert_eq!(arguments, "{\"cmd\":\"ls\"}");
+        // 块本身还没有文本时，首个工具输出自带的前导换行要去掉。
+        assert_eq!(output, "out");
+    }
+
     #[test]
     fn finalize_falls_back_to_previous_text_when_incoming_is_empty() {
         let mut state = ConversationState::new();

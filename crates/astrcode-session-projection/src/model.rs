@@ -144,7 +144,9 @@ impl SessionReadModel {
 }
 
 /// 会话列表摘要读模型。
-#[derive(Debug, Clone, PartialEq)]
+///
+/// 可序列化是为了让存储层把它作为冷会话列举的 sidecar 缓存落盘复用。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionSummary {
     pub session_id: SessionId,
     pub created_at: String,

@@ -664,3 +664,135 @@ async fn session_listing_skips_unreadable_event_logs() {
     // 直接打开该会话仍按严格解码失败，不被列表的跳过掩盖。
     assert!(reopened.session_read_model(&corrupt_id).await.is_err());
 }
+
+#[tokio::test]
+async fn cold_listing_backfills_summary_cache_and_stays_consistent() {
+    let dir = tempdir().unwrap();
+    let session_id = SessionId::new("summary-cache");
+    let repo = FileSystemSessionRepository::with_projects_base(dir.path().into());
+    repo.create_session(started_event(&session_id))
+        .await
+        .unwrap();
+    repo.append_event(user_event(&session_id, "cached title"))
+        .await
+        .unwrap();
+    repo.sync_durable_events(&session_id).await.unwrap();
+    let session_dir = repo.find_session_dir(&session_id).await.unwrap();
+    drop(repo);
+
+    let first = FileSystemSessionRepository::with_projects_base(dir.path().into());
+    let cold = first.list_session_summaries().await.unwrap();
+    assert_eq!(cold.len(), 1);
+    assert_eq!(cold[0].first_user_message.as_deref(), Some("cached title"));
+    // 首次冷读必须回填 sidecar，后续列举才有免扫日志的依据。
+    assert!(session_dir.join("summary-cache.json").is_file());
+    drop(first);
+
+    let second = FileSystemSessionRepository::with_projects_base(dir.path().into());
+    assert_eq!(second.list_session_summaries().await.unwrap(), cold);
+}
+
+#[tokio::test]
+async fn cold_listing_serves_summary_cache_without_reparsing_the_log() {
+    let dir = tempdir().unwrap();
+    let session_id = SessionId::new("summary-cache-hit");
+    let repo = FileSystemSessionRepository::with_projects_base(dir.path().into());
+    repo.create_session(started_event(&session_id))
+        .await
+        .unwrap();
+    repo.append_event(user_event(&session_id, "cached title"))
+        .await
+        .unwrap();
+    repo.sync_durable_events(&session_id).await.unwrap();
+    let session_dir = repo.find_session_dir(&session_id).await.unwrap();
+    let log_path = FileSystemSessionRepository::event_log_path(&session_dir, &session_id);
+    drop(repo);
+
+    let warm = FileSystemSessionRepository::with_projects_base(dir.path().into());
+    let expected = warm.list_session_summaries().await.unwrap();
+    assert_eq!(expected.len(), 1);
+    drop(warm);
+
+    // 把日志首字节换成数组开头：长度不变，但整行已无法按事件解码。长度不变使 sidecar
+    // 依然有效，于是「仍能列举出该会话」只可能来自缓存——重扫日志的路径会跳过它。
+    let mut bytes = std::fs::read(&log_path).unwrap();
+    bytes[0] = b'[';
+    std::fs::write(&log_path, &bytes).unwrap();
+
+    let cached = FileSystemSessionRepository::with_projects_base(dir.path().into());
+    assert_eq!(cached.list_session_summaries().await.unwrap(), expected);
+    drop(cached);
+
+    // 移走 sidecar 后，同一份日志必须按不可解码被跳过，反证上一步确实走了缓存。
+    std::fs::remove_file(session_dir.join("summary-cache.json")).unwrap();
+    let uncached = FileSystemSessionRepository::with_projects_base(dir.path().into());
+    assert!(uncached.list_session_summaries().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn cold_listing_invalidates_summary_cache_when_the_log_grows() {
+    let dir = tempdir().unwrap();
+    let session_id = SessionId::new("summary-cache-stale");
+    let repo = FileSystemSessionRepository::with_projects_base(dir.path().into());
+    repo.create_session(started_event(&session_id))
+        .await
+        .unwrap();
+    repo.append_event(user_event(&session_id, "first"))
+        .await
+        .unwrap();
+    repo.sync_durable_events(&session_id).await.unwrap();
+    drop(repo);
+
+    let before = FileSystemSessionRepository::with_projects_base(dir.path().into());
+    let cached = before.list_session_summaries().await.unwrap();
+    assert_eq!(cached.len(), 1);
+    drop(before);
+
+    let writer = FileSystemSessionRepository::with_projects_base(dir.path().into());
+    writer
+        .append_event(user_event(&session_id, "second"))
+        .await
+        .unwrap();
+    writer.sync_durable_events(&session_id).await.unwrap();
+    drop(writer);
+
+    // 日志变长后旧 sidecar 必须失效，冷列举要回到全量扫描并追上新状态。
+    let after = FileSystemSessionRepository::with_projects_base(dir.path().into());
+    let refreshed = after.list_session_summaries().await.unwrap();
+    assert_eq!(refreshed.len(), 1);
+    assert_ne!(refreshed[0].latest_cursor, cached[0].latest_cursor);
+    assert_eq!(refreshed[0].first_user_message.as_deref(), Some("first"));
+    let hot = after
+        .session_read_model(&session_id)
+        .await
+        .unwrap()
+        .to_summary();
+    assert_eq!(refreshed[0], hot);
+}
+
+#[tokio::test]
+async fn cold_listing_falls_back_when_summary_cache_is_unreadable() {
+    let dir = tempdir().unwrap();
+    let session_id = SessionId::new("summary-cache-corrupt");
+    let repo = FileSystemSessionRepository::with_projects_base(dir.path().into());
+    repo.create_session(started_event(&session_id))
+        .await
+        .unwrap();
+    repo.append_event(user_event(&session_id, "cached title"))
+        .await
+        .unwrap();
+    repo.sync_durable_events(&session_id).await.unwrap();
+    let session_dir = repo.find_session_dir(&session_id).await.unwrap();
+    drop(repo);
+
+    // 不可解析的 sidecar 只能被当成未命中，绝不能当成权威内容喂给列举结果。
+    std::fs::write(session_dir.join("summary-cache.json"), b"{not json").unwrap();
+
+    let reopened = FileSystemSessionRepository::with_projects_base(dir.path().into());
+    let summaries = reopened.list_session_summaries().await.unwrap();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(
+        summaries[0].first_user_message.as_deref(),
+        Some("cached title")
+    );
+}
