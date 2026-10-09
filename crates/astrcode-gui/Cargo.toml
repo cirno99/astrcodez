@@ -26,3 +26,7 @@ tracing = { workspace = true }
 tikv-jemallocator = { workspace = true }
 # 运行时调 dirty/muzzy decay，让峰值后的脏页尽快归还 OS。
 tikv-jemalloc-ctl = "0.7.0"
+
+# 入口用 libc::prctl 关掉本进程的透明大页（见 main.rs::disable_transparent_huge_pages）。
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { workspace = true }

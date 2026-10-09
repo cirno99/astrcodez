@@ -8,6 +8,8 @@ use tikv_jemallocator::Jemalloc;
 static GLOBAL: Jemalloc = Jemalloc;
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    disable_transparent_huge_pages();
     #[cfg(not(target_env = "msvc"))]
     tune_jemalloc_decay();
     astrcode_gui::run();
@@ -62,6 +64,24 @@ fn tune_jemalloc_decay() {
     }
 }
 
+/// 关闭本进程的透明大页（THP）。
+///
+/// 本进程的堆是稀疏写入的：jemalloc 的 extent 分散在十几个 arena 里，元数据与小
+/// 对象散布其间。系统 `transparent_hugepage/enabled=always` 时，2MB 对齐区段里的
+/// 任意一次写故障都会落地一整页 2MB 的零填充大页并计入 RssAnon，于是常驻内存里
+/// 绝大部分是零字节。实测同一份二进制、同一份数据：开启 THP 时 RssAnon 188MB
+/// （其中 184MB 是大页，非零内容仅约 3MB），关闭后 19MB，线程数与功能不变。
+///
+/// 桌面 App 常驻，RSS 观感优先于 TLB 收益：堆本身稀疏，THP 几乎没有可覆盖的连续
+/// 热点。放在入口最先执行，让后续映射都不参与大页。
+#[cfg(target_os = "linux")]
+fn disable_transparent_huge_pages() {
+    // SAFETY：PR_SET_THP_DISABLE 只把第二个参数当布尔标志读，不接触用户内存。
+    if unsafe { libc::prctl(libc::PR_SET_THP_DISABLE, 1, 0, 0, 0) } != 0 {
+        eprintln!("关闭透明大页失败：{}", std::io::Error::last_os_error());
+    }
+}
+
 #[cfg(all(test, not(target_env = "msvc")))]
 mod tests {
     use tikv_jemalloc_ctl::raw;
@@ -81,5 +101,14 @@ mod tests {
             let arena0_dirty: i64 = raw::read(b"arena.0.dirty_decay_ms\0").unwrap();
             assert_eq!(arena0_dirty, 1_000);
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn transparent_huge_pages_are_disabled() {
+        super::disable_transparent_huge_pages();
+        // SAFETY：PR_GET_THP_DISABLE 不触碰用户内存，返回当前进程的该标志位。
+        let disabled = unsafe { libc::prctl(libc::PR_GET_THP_DISABLE, 0, 0, 0, 0) };
+        assert_eq!(disabled, 1);
     }
 }

@@ -768,6 +768,7 @@ dependencies = [
  "astrcode-ui",
  "gpui-kit",
  "gpui-pre-reqwest-client",
+ "libc",
  "thiserror 2.0.19",
  "tikv-jemalloc-ctl",
  "tikv-jemallocator",
