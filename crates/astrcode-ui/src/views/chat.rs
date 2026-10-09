@@ -21,8 +21,8 @@ use astrcode_protocol::{
 use gpui_kit::{
     AnyElement, App, AppContext as _, AsyncApp, ClipboardItem, Context, Entity, EventEmitter,
     Focusable as _, FontWeight, Hsla, InteractiveElement as _, IntoElement, Keystroke,
-    ParentElement as _, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Subscription, Task, WeakEntity, Window,
+    ListAlignment, ListState, ParentElement as _, Render, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Task, WeakEntity, Window,
     component::{
         ActiveTheme as _, Disableable as _, Sizable as _, Size, ThemeStyled as _,
         bubble::{Bubble, BubbleVariant},
@@ -34,7 +34,7 @@ use gpui_kit::{
         text::{TextView, TextViewState},
         v_flex,
     },
-    div, px, radians,
+    div, list, px, radians,
 };
 use serde_json::Value;
 
@@ -173,7 +173,10 @@ pub struct ChatView {
     ask_user: HashMap<String, Entity<AskUserCard>>,
     /// 顶栏显示的对象名；由外壳在切会话时注入。
     title: Option<SharedString>,
-    scroll: ScrollHandle,
+    /// 转录的虚拟列表状态：只物化可见项，长会话不再随块数线性长内存。
+    transcript: ListState,
+    /// 上次同步进 [`Self::transcript`] 的块修订号，用来区分「尾部追加」与「整体替换」。
+    transcript_synced_revision: u64,
     error: Option<String>,
     /// 事件流消费任务；换会话时整体丢弃以停掉旧流。
     stream_task: Option<Task<()>>,
@@ -303,7 +306,8 @@ impl ChatView {
             preview_expanded: HashMap::new(),
             ask_user: HashMap::new(),
             title: None,
-            scroll: ScrollHandle::new(),
+            transcript: ListState::new(0, ListAlignment::Bottom, px(600.)),
+            transcript_synced_revision: 0,
             error: None,
             stream_task: None,
             copied: None,
@@ -527,8 +531,31 @@ impl ChatView {
         self.prune_expanded();
         // 控制态一变就可能从「执行中」落回空闲：那是队列出队的时候。
         self.flush_queue(cx);
-        self.scroll.scroll_to_bottom();
+        self.sync_transcript_list();
+        self.transcript.scroll_to_end();
         cx.notify();
+    }
+
+    /// 把虚拟列表的项数与修订号同步到当前会话状态。
+    ///
+    /// 同步决策见 [`transcript_sync_plan`]；这里只负责执行。
+    fn sync_transcript_list(&mut self) {
+        let items = transcript_items(self.state.blocks());
+        let count = items.len() + usize::from(needs_session_fork_row(&items));
+        let revision = self.state.blocks_revision();
+        let old_count = self.transcript.item_count();
+        match transcript_sync_plan(old_count, count, revision, self.transcript_synced_revision) {
+            TranscriptSync::None => {},
+            TranscriptSync::Splice {
+                at,
+                replaced,
+                count,
+            } => {
+                self.transcript.splice(at..at + replaced, count);
+            },
+            TranscriptSync::Remeasure => self.transcript.remeasure_items(0..count),
+        }
+        self.transcript_synced_revision = revision;
     }
 
     /// 跨会话问卷的轮询：只在事件流没连着时才去拉全局快照。
@@ -1446,17 +1473,40 @@ impl ChatView {
             return self.render_placeholder("还没有消息，发送一条提示开始", cx);
         }
 
-        let mut column = v_flex().gap_4();
-        for item in &items {
-            column = column.child(match item {
-                TranscriptItem::Block(block) => self.render_block(block, cx),
-                TranscriptItem::Run(run) => self.render_run(run, cx),
-            });
-        }
-        if needs_session_fork_row(&items) {
-            column = column.child(self.render_fork_row(cx));
-        }
-        column.into_any_element()
+        // 虚拟列表：渲染闭包只对可见项（含 overdraw）调用，离屏块不再构建元素树。
+        // `sync_transcript_list` 已在 `render` 入口同步过项数与测量标记。
+        let view = cx.entity();
+        list(self.transcript.clone(), move |ix, _window, cx| {
+            view.update(cx, |this, cx| this.render_transcript_item(ix, cx))
+        })
+        .flex_1()
+        .pt_6()
+        .pb_2()
+        // 横向 gutter 不能挂在 list 上：列表只把纵向 padding 计入项定位，横向的等于没有。
+        .into_any_element()
+    }
+
+    /// 渲染第 `ix` 个转录项；计数里为「分叉当前会话」入口预留的位置就是 `items.len()`。
+    ///
+    /// 项与项之间的间距由这里的 `pb_4` 承担（list 不是 flex 容器，没有 gap），
+    /// 尾项多出的 16px 由列表的 `pb_2` 抵回，总底边距与旧的 `py_6` 容器一致。
+    ///
+    /// 外层必须 `w_full`：项是以「可用宽度 = 列表宽」的根盒量出来的，不撑满就退化成
+    /// fit-content，气泡的 `self_end`/`ml_auto` 无处靠右，整条消息会贴左。横向 gutter
+    /// 同样只能挂在这一层。
+    fn render_transcript_item(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+        let items = transcript_items(self.state.blocks());
+        let item = match items.get(ix) {
+            Some(TranscriptItem::Block(block)) => self.render_block(block, cx),
+            Some(TranscriptItem::Run(run)) => self.render_run(run, cx),
+            None => self.render_fork_row(cx),
+        };
+        v_flex()
+            .w_full()
+            .px_6()
+            .pb_4()
+            .child(item)
+            .into_any_element()
     }
 
     /// 跨会话待回答问卷的横幅：当前会话丢了工具块的给恢复卡片，其余会话给一行可点的入口。
@@ -3176,26 +3226,15 @@ impl ChatView {
 
 impl Render for ChatView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_transcript_list();
         v_flex()
             .size_full()
             .bg(cx.theme().background)
             .child(self.render_header(cx))
             .child(self.render_pending_banner(cx))
-            .child(
-                div()
-                    .id("transcript")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .child(
-                        v_flex()
-                            .w_full()
-                            .px_6()
-                            .py_6()
-                            .child(self.render_transcript(cx)),
-                    ),
-            )
+            // 必须是 flex 列容器：块容器会忽略子项的 `flex_1`，虚拟列表就只能拿到
+            // 自身 padding 的高度（32px），贴底对齐后可见区里什么都画不出来。
+            .child(v_flex().flex_1().min_h_0().child(self.render_transcript(cx)))
             .child(self.render_input(cx))
     }
 }
@@ -3443,5 +3482,115 @@ fn phase_label(phase: PhaseDto) -> &'static str {
         PhaseDto::CallingTool => "调用工具…",
         PhaseDto::Compacting => "压缩上下文中…",
         PhaseDto::Error => "出错",
+    }
+}
+
+/// 虚拟列表的一次同步动作。
+#[derive(Debug, PartialEq, Eq)]
+enum TranscriptSync {
+    /// 无需调整。
+    None,
+    /// 用 `count` 项替换 `[at, at + replaced)` 区间。
+    Splice {
+        at: usize,
+        replaced: usize,
+        count: usize,
+    },
+    /// 数量不变但内容变了：全部重测高度。
+    Remeasure,
+}
+
+/// 根据修订号与项数变化决定虚拟列表的同步方式。
+///
+/// 修订号单调推进时的数量增长是流式落库的常规路径：尾部追加，保留已有项的
+/// 测量高度。其余数量变化（清 transient、压缩重 hydrate、切会话——修订号可能
+/// 回退）说明项的身份不可信，只能整体重建。数量不变而修订号变了是流式文本
+/// 长高，重测但不重建：`remeasure_items` 保留旧高度作 size_hint，滚动不跳。
+///
+/// 注意 `ListState::splice(old_range, count)` 的总项数是「保留项 + count」，
+/// 尾部追加必须传 `count - old_count` 个新项，而不是目标总数。
+fn transcript_sync_plan(
+    old_count: usize,
+    count: usize,
+    revision: u64,
+    synced_revision: u64,
+) -> TranscriptSync {
+    if count == old_count {
+        return if revision == synced_revision {
+            TranscriptSync::None
+        } else {
+            TranscriptSync::Remeasure
+        };
+    }
+    if count > old_count && revision >= synced_revision {
+        TranscriptSync::Splice {
+            at: old_count,
+            replaced: 0,
+            count: count - old_count,
+        }
+    } else {
+        TranscriptSync::Splice {
+            at: 0,
+            replaced: old_count,
+            count,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{TranscriptSync, transcript_sync_plan};
+
+    #[test]
+    fn streaming_append_adds_only_the_new_items() {
+        // 流式落库：旧 3 项、新 4 项、修订号前进，只应追加 1 项。
+        assert_eq!(
+            transcript_sync_plan(3, 4, 6, 5),
+            TranscriptSync::Splice {
+                at: 3,
+                replaced: 0,
+                count: 1
+            }
+        );
+    }
+
+    #[test]
+    fn first_load_of_a_session_builds_the_whole_list() {
+        assert_eq!(
+            transcript_sync_plan(0, 12, 1, 0),
+            TranscriptSync::Splice {
+                at: 0,
+                replaced: 0,
+                count: 12
+            }
+        );
+    }
+
+    #[test]
+    fn switching_sessions_rebuilds_instead_of_appending() {
+        // 切到更大的会话：修订号回退，不得走追加路径——否则项数变成 5 + 12。
+        assert_eq!(
+            transcript_sync_plan(5, 12, 1, 30),
+            TranscriptSync::Splice {
+                at: 0,
+                replaced: 5,
+                count: 12
+            }
+        );
+        // 切到更小的会话：数量缩减，同样整体重建。
+        assert_eq!(
+            transcript_sync_plan(12, 5, 2, 1),
+            TranscriptSync::Splice {
+                at: 0,
+                replaced: 12,
+                count: 5
+            }
+        );
+    }
+
+    #[test]
+    fn content_only_changes_remeasure_without_rebuilding() {
+        assert_eq!(transcript_sync_plan(7, 7, 9, 8), TranscriptSync::Remeasure);
+        assert_eq!(transcript_sync_plan(7, 7, 9, 9), TranscriptSync::None);
     }
 }

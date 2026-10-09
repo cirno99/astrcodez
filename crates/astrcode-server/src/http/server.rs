@@ -214,6 +214,8 @@ pub async fn run_http_server(
     })?;
     let local_port = listener.local_addr()?.port();
     write_run_info(local_port);
+    // 仅在产物真的会被内嵌时才检查缺失；桌面构建不内嵌是有意为之，不告警。
+    #[cfg(feature = "embed-webui")]
     if !super::webui_assets::has_wasm_artifact() {
         tracing::warn!(
             "embedded Web UI has no wasm artifact; run `scripts/build.sh` and rebuild \

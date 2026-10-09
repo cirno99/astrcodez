@@ -10,7 +10,9 @@ pub struct HostError {
     pub message: String,
     pub hint: Option<String>,
     pub retryable: bool,
-    pub details: Option<Value>,
+    /// 与 [`ErrorPayload::details`](crate::wire::protocol::ErrorPayload::details) 同因装箱：
+    /// 内联的 `Value` 会让 `Result<_, HostError>` 达到 152 字节。
+    pub details: Option<Box<Value>>,
 }
 
 impl HostError {
@@ -35,7 +37,7 @@ impl HostError {
     }
 
     pub fn with_details(mut self, details: Value) -> Self {
-        self.details = Some(details);
+        self.details = Some(Box::new(details));
         self
     }
 
@@ -81,7 +83,7 @@ mod tests {
             message: "future failure".into(),
             hint: Some("upgrade the extension".into()),
             retryable: true,
-            details: Some(json!({ "revision": 3 })),
+            details: Some(Box::new(json!({ "revision": 3 }))),
         };
 
         let error = HostError::from(payload.clone());

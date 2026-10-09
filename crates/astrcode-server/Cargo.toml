@@ -14,6 +14,11 @@ name = "astrcode-http-server"
 path = "src/http_main.rs"
 
 [features]
+default = ["embed-webui"]
+# 内嵌 Web UI 前端产物（约 18MB）。桌面 App 永不访问它，构建 astrcode-gui 时
+# 用 default-features = false 排除，省掉二进制体积与触碰后的常驻页。
+# 注意 Cargo 的 feature 加合性：与 astrcode-cli 同一次构建时会被并回来。
+embed-webui = ["dep:rust-embed"]
 # 启用测试辅助路径：内存事件存储 + bootstrap_with 的测试起动模式。
 # 仅应用于集成测试，不应进入生产二进制。
 testing = ["astrcode-storage/testing"]
@@ -45,7 +50,7 @@ tower-http = { workspace = true }
 uuid = { workspace = true }
 agent-client-protocol = { workspace = true }
 tempfile = { workspace = true }
-rust-embed = { workspace = true }
+rust-embed = { workspace = true, optional = true }
 
 [[test]]
 name = "http_routes"

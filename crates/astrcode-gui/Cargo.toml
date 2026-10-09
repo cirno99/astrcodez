@@ -14,7 +14,8 @@ gpui-kit = "0.7.1"
 # 原生宿主的 HTTP 客户端：reqwest 实现，自带 tokio 运行时，不外溢到共享 UI 层。
 reqwest_client = { package = "gpui-pre-reqwest-client", version = "0.3.7" }
 astrcode-ui = { path = "../astrcode-ui" }
-astrcode-server = { path = "../astrcode-server" }
+# 桌面 App 不访问 Web UI，不内嵌其前端产物（见 server 的 embed-webui feature）。
+astrcode-server = { path = "../astrcode-server", default-features = false }
 astrcode-extension-sdk = { path = "../astrcode-extension-sdk" }
 astrcode-log = { path = "../astrcode-log" }
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time", "net", "macros"] }
@@ -23,3 +24,5 @@ tracing = { workspace = true }
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = { workspace = true }
+# 运行时调 dirty/muzzy decay，让峰值后的脏页尽快归还 OS。
+tikv-jemalloc-ctl = "0.7.0"

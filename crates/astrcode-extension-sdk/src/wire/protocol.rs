@@ -389,7 +389,9 @@ pub struct ErrorPayload {
     #[serde(default)]
     pub retryable: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub details: Option<Value>,
+    /// 装箱：`preserve_order` 下的 `Value` 有 72 字节，内联会让每个 `Result` 都拖着
+    /// 152 字节的错误载荷（clippy::result_large_err）。序列化形态不受影响。
+    pub details: Option<Box<Value>>,
 }
 
 impl ErrorPayload {
@@ -418,7 +420,7 @@ impl ErrorPayload {
     }
 
     pub fn with_details(mut self, details: Value) -> Self {
-        self.details = Some(details);
+        self.details = Some(Box::new(details));
         self
     }
 }
