@@ -11,7 +11,7 @@
 
 A Rust-built AI coding agent platform.
 
-AstrCode is an AI coding assistant platform built entirely in Rust, with a GPUI desktop app, a browser UI, and a CLI. It features an agent loop with tool execution, a streaming SSE-based multi-provider LLM layer (Anthropic and OpenAI-compatible providers), typed authoring APIs for bundled and disk IPC subprocess extensions, background pre-warm, health checks, and a startup event channel, a persistent MCP process pool (reusing long-lived connections across turns), built-in web search and URL fetch tools, context window management with auto-compaction, an eval framework for automated benchmarking, and multiple interfaces: a desktop app, a browser UI, HTTP/SSE API, and an ACP (Agent Client Protocol) adapter.
+AstrCode is an AI coding assistant platform built entirely in Rust, with a GPUI desktop app, a browser UI, and a CLI. It features an agent loop with tool execution, a streaming SSE-based multi-provider LLM layer (Anthropic and OpenAI-compatible providers), typed authoring APIs for bundled and disk IPC subprocess extensions, background pre-warm, health checks, and a startup event channel, a persistent MCP process pool (reusing long-lived connections across turns), built-in web search and URL fetch tools, a project-scoped kanban board that drives background sessions from requirement cards, context window management with auto-compaction, an eval framework for automated benchmarking, and multiple interfaces: a GPUI desktop app and a browser UI sharing one UI layer, a CLI, HTTP/SSE API, and an ACP (Agent Client Protocol) adapter.
 
 ## Table of Contents
 
@@ -23,23 +23,10 @@ AstrCode is an AI coding assistant platform built entirely in Rust, with a GPUI 
 - [Key Design Decisions](#key-design-decisions)
 - [Running Modes](#running-modes)
 - [Further Reading](#further-reading)
-- [Distribution](#distribution)
 - [Acknowledgments](#acknowledgments)
 - [License](#license)
 
 ## Installation
-
-### NPM Package
-
-```bash
-npm i @whatevertogo/astrcode
-```
-
-The `@whatevertogo/astrcode` npm package provides pre-built binaries for Linux, macOS, and Windows (x64 + arm64). After installation, the `astrcode` command will be available globally.
-
-**Package**: [`@whatevertogo/astrcode`](https://www.npmjs.com/package/@whatevertogo/astrcode)
-
-### Build from Source
 
 See [Quick Start](#quick-start) below for building from source.
 
@@ -166,7 +153,7 @@ MCP servers start at extension initialization and persist across turns via a lon
 
 ### Extension Configuration
 
-Extensions can be enabled or disabled via `~/.astrcode/config.toml`. By default, all extensions are enabled except `memory`, which is disabled by default.
+Extensions can be enabled or disabled via `~/.astrcode/config.toml`. By default, all extensions are enabled except `memory` and `kanban`.
 
 ```toml
 version = "1"
@@ -184,13 +171,17 @@ First-party extensions are wired through [`astrcode-bundled-extensions`](crates/
 | Extension | Crate | Description |
 |---|---|---|
 | **Agent Tools** | `astrcode-extension-agent-tools` | Sub-agent delegation, agent discovery |
+| **Coding** | `astrcode-extension-coding` | Eight first-party tools — read, read_tool_result, write, edit, patch, glob, grep, and shell — using only SDK host capabilities |
 | **MCP** | `astrcode-extension-mcp` | MCP protocol client with persistent process pool, background pre-warm, inflight merge |
 | **Skill** | `astrcode-extension-skill` | Slash-command skill discovery and dispatch |
 | **Todo Tool** | `astrcode-extension-todo-tool` | Progress tracking todo list tool |
+| **Ask User** | `astrcode-extension-ask-user` | Structured user questions with pending interaction state and protected replies |
 | **Goal** | `astrcode-extension-goal` | Codex-style session goal tracking, token budgets, and automatic continuation |
 | **Ralph** | `astrcode-extension-ralph` | Ralph loop: re-feeds a workspace task file each round until a completion promise is printed |
 | **Memory** | `astrcode-extension-memory` | Project-scoped markdown memory storage (disabled by default) |
+| **Kanban** | `astrcode-extension-kanban` | Requirement-card kanban board: polls `ready` cards in the background and runs analysis plus implementation sessions until a card reaches a terminal state (disabled by default) |
 | **Web Tools** | `astrcode-extension-web-tools` | Built-in `web-search` and `fetch-url` tools (DuckDuckGo default; Brave/Serper optional) |
+| **Session Commands** | `astrcode-extension-session-commands` | Session commands declared through the extension SDK and executed by the host |
 
 Configure Web Tools under `extensions.astrcode-web-tools` (enabled by default):
 
@@ -270,8 +261,8 @@ For detailed configuration documentation, see [Configuration Guide](docs/configu
 
 ```
           ┌──────────────────────┐  ┌───────────┐
-          │       Web UI         │  │ ACP Client│
-          │  gpui + WebAssembly  │  │  (stdio)  │
+          │ Desktop App (GPUI)   │  │ ACP Client│
+          │ Web UI (wasm)        │  │  (stdio)  │
           └───────────┬──────────┘  └─────┬─────┘
                       │ SSE / JSON-RPC    │ ACP JSON-RPC
                       │                   │ over stdio
@@ -303,8 +294,9 @@ For detailed configuration documentation, see [Configuration Guide](docs/configu
                    ┌──────────────────┴─────────┐
                    │ Extension layer             │
                    │ bundled-extensions          │
-                   │ astrcode-extension-coding   │
-                   │ mode · goal · skill · todo  │
+                   │ coding · ask-user · goal    │
+                   │ ralph · skill · todo        │
+                   │ kanban · session-commands   │
                    │ agent-tools · mcp · memory  │
                    │ web-tools + IPC             │
                    └────────────────────────────┘
@@ -317,7 +309,7 @@ For detailed configuration documentation, see [Configuration Guide](docs/configu
 
 ## Crates
 
-The Cargo workspace under [`crates/`](crates/) contains **31 crates**. Crates are grouped by architectural layer (details in [Architecture](docs/architecture.md)).
+The Cargo workspace under [`crates/`](crates/) contains **33 crates**. Crates are grouped by architectural layer (details in [Architecture](docs/architecture.md)).
 
 ### Layer 0: Foundation Contracts
 
@@ -326,6 +318,7 @@ The Cargo workspace under [`crates/`](crates/) contains **31 crates**. Crates ar
 | [`astrcode-core`](crates/astrcode-core) | Shared domain types, traits, config system, and prompt composition |
 | [`astrcode-session-projection`](crates/astrcode-session-projection) | Pure durable-event reducer and session read model |
 | [`astrcode-protocol`](crates/astrcode-protocol) | JSON-RPC 2.0 wire types, commands, events, and HTTP/UI DTOs |
+| [`astrcode-paths`](crates/astrcode-paths) | Process-level directory primitives shared across the workspace; re-exported by `astrcode-core` defaults |
 
 ### Layer 1: Core Implementations
 
@@ -347,6 +340,7 @@ The Cargo workspace under [`crates/`](crates/) contains **31 crates**. Crates ar
 | Crate | Description |
 |---|---|
 | [`astrcode-extension-sdk`](crates/astrcode-extension-sdk) | Extension authoring API plus the shared S5R wire, framing, peer, and host-operation contract |
+| [`astrcode-s5r-runtime`](crates/astrcode-s5r-runtime) | S5R subprocess runtime: peer state machine and I/O driver shared by host and worker |
 | [`astrcode-extension-worker`](crates/astrcode-extension-worker) | S5R subprocess worker runtime, handler dispatch, and remote typed `HostClient` |
 | [`astrcode-extensions`](crates/astrcode-extensions) | Host-side extension lifecycle, hook dispatch, capability gating, and disk IPC loader |
 | [`astrcode-bundled-extensions`](crates/astrcode-bundled-extensions) | Composition root that registers all first-party extension crates |
@@ -372,6 +366,9 @@ The Cargo workspace under [`crates/`](crates/) contains **31 crates**. Crates ar
 
 | Crate | Description |
 |---|---|
+| [`astrcode-gui`](crates/astrcode-gui) | GPUI Kit desktop app: boots an in-process server and hosts the shared UI layer |
+| [`astrcode-webui`](crates/astrcode-webui) | Web (wasm) host of the shared UI layer; assets are embedded into the server binary via `rust-embed` |
+| [`astrcode-ui`](crates/astrcode-ui) | Host-agnostic shared UI layer (views, session state, theme) used by both the desktop app and the Web UI |
 | [`astrcode-cli`](crates/astrcode-cli) | CLI entry: headless exec, server, and ACP launchers |
 
 ### Layer 6: Evaluation
@@ -478,6 +475,7 @@ Stable sections (Identity, System, Task Guidelines) come first to leverage promp
 |---|---|---|
 | **Exec** | `cargo run -- exec "prompt"` | Headless single-shot execution, supports `--jsonl`|
 | **Server** | `cargo run -- server [--addr 0.0.0.0:3847]` | HTTP/SSE server with JSON-RPC, session management, real-time event streaming |
+| **Desktop** | `cargo run -p astrcode-gui` | GPUI Kit desktop app; boots an in-process HTTP/SSE server on a random local port |
 | **ACP** | `cargo run -- acp` | ACP stdio adapter for IDE/editor integration |
 | **Eval** | `cargo run --features dev-mode -- eval` | Run evaluation benchmarks (requires `dev-mode` feature) |
 | **Web** | `scripts/build.sh`, then open `http://127.0.0.1:3847` | Browser UI; assets are embedded into the binary at compile time |
@@ -495,15 +493,7 @@ Stable sections (Identity, System, Task Guidelines) come first to leverage promp
 | [Design: Provider Request Rewrite Chain](docs/provider-request-rewrite-chain-design.md) | Unified chained primitive for provider request rewrites |
 | [Architecture: Unified Extension Tool Runtime](docs/architecture/unified-extension-tool-runtime.md) | Unified extension tool runtime boundaries and migration notes |
 | [Architecture: S5R 3.0 Implementation](docs/architecture/s5r-3-implementation.md) | S5R 3.0 implementation decisions and status |
-| [Release Guide](docs/release.md) | Version sync, release workflows, and npm/GitHub distribution |
-
-## Distribution
-
-Pre-built binaries are available for Linux, macOS, and Windows (x86_64 + aarch64) via GitHub Releases on every version tag. Manual releases should use the `Release` workflow so version metadata, tags, npm packages, and GitHub assets stay in sync. The weekly workflow publishes a patch release only when commits landed since the previous version.
-
-**NPM Package**: [`@whatevertogo/astrcode`](https://www.npmjs.com/package/@whatevertogo/astrcode)
-
-See [Release Guide](docs/release.md) for the release checklist.
+| [Release Guide](docs/release.md) | Version sync and release process |
 
 ## Acknowledgments
 

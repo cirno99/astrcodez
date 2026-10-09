@@ -11,7 +11,7 @@
 
 用 Rust 从零构建的 AI 编程助手平台。
 
-AstrCode 是一个全部用 Rust 构建的 AI 编程助手平台，包含 GPUI 桌面 App、浏览器 UI 与 CLI。包含带工具执行的 Agent 循环、基于 SSE 流式传输的多 Provider LLM 层（Anthropic 与 OpenAI 兼容 Provider）、面向内置扩展与磁盘 IPC 子进程扩展的类型化作者接口（后台预热、健康检查、启动阶段事件通道）、MCP 常驻进程池（跨 turn 复用长连接）、内置 Web 搜索与 URL 抓取工具、带自动压缩的上下文窗口管理、评测框架，以及多种交互方式：桌面 App、浏览器 UI、HTTP/SSE API 和 ACP（Agent Client Protocol）适配器。
+AstrCode 是一个全部用 Rust 构建的 AI 编程助手平台，包含 GPUI 桌面 App、浏览器 UI 与 CLI。包含带工具执行的 Agent 循环、基于 SSE 流式传输的多 Provider LLM 层（Anthropic 与 OpenAI 兼容 Provider）、面向内置扩展与磁盘 IPC 子进程扩展的类型化作者接口（后台预热、健康检查、启动阶段事件通道）、MCP 常驻进程池（跨 turn 复用长连接）、内置 Web 搜索与 URL 抓取工具、从需求卡片驱动后台会话的项目级看板、带自动压缩的上下文窗口管理、评测框架，以及多种交互方式：共享同一 UI 层的 GPUI 桌面 App 与浏览器 UI、CLI、HTTP/SSE API 和 ACP（Agent Client Protocol）适配器。
 
 ## 目录
 
@@ -23,23 +23,10 @@ AstrCode 是一个全部用 Rust 构建的 AI 编程助手平台，包含 GPUI �
 - [核心设计](#核心设计)
 - [运行模式](#运行模式)
 - [延伸阅读](#延伸阅读)
-- [发行](#发行)
 - [致谢](#致谢)
 - [License](#license)
 
 ## 安装
-
-### NPM 包
-
-```bash
-npm i @whatevertogo/astrcode
-```
-
-`@whatevertogo/astrcode` npm 包提供了 Linux、macOS 和 Windows（x64 + arm64）的预编译二进制文件。安装后，`astrcode` 命令将全局可用。
-
-**包地址**：[`@whatevertogo/astrcode`](https://www.npmjs.com/package/@whatevertogo/astrcode)
-
-### 从源代码构建
 
 参见下方的[快速开始](#快速开始)。
 
@@ -166,7 +153,7 @@ MCP 服务器在扩展初始化时启动，通过长连接进程池跨 turn 复�
 
 ### 扩展配置
 
-可通过 `~/.astrcode/config.toml` 的 `runtime.extensionStates` 启用或禁用扩展。默认情况下，除 `memory` 外均启用。完整字段见 [配置指南](docs/configuration.md)。
+可通过 `~/.astrcode/config.toml` 的 `runtime.extensionStates` 启用或禁用扩展。默认情况下，除 `memory` 与 `kanban` 外均启用。完整字段见 [配置指南](docs/configuration.md)。
 
 ```toml
 version = "1"
@@ -184,13 +171,17 @@ version = "1"
 | 扩展 | Crate | 说明 |
 |---|---|---|
 | **Agent Tools** | `astrcode-extension-agent-tools` | 子 Agent 委派、Agent 发现 |
+| **Coding** | `astrcode-extension-coding` | 八个第一方工具——read、read_tool_result、write、edit、patch、glob、grep、shell——仅依赖 SDK 宿主能力 |
 | **MCP** | `astrcode-extension-mcp` | MCP 协议客户端（常驻进程池、后台预热、并发合并） |
 | **Skill** | `astrcode-extension-skill` | 斜杠命令技能发现与调度 |
 | **Todo Tool** | `astrcode-extension-todo-tool` | 进度追踪 Todo 工具 |
+| **Ask User** | `astrcode-extension-ask-user` | 结构化用户提问、待交互状态与受保护回复 |
 | **Goal** | `astrcode-extension-goal` | Codex 风格会话目标、Token 预算、自动延续 |
 | **Ralph** | `astrcode-extension-ralph` | Ralph 循环：每轮重新注入工作区任务文件，直到打印完成承诺 |
 | **Memory** | `astrcode-extension-memory` | 项目作用域的 Markdown 记忆存储（默认关闭） |
+| **Kanban** | `astrcode-extension-kanban` | 需求卡片看板：后台定期领取 `ready` 卡片，创建会话先分析再实施，直到卡片进入终态（默认关闭） |
 | **Web Tools** | `astrcode-extension-web-tools` | 内置 `web-search` 与 `fetch-url` 工具（默认 DuckDuckGo；可选 Brave/Serper） |
+| **Session Commands** | `astrcode-extension-session-commands` | 通过扩展 SDK 声明、由宿主执行的会话命令 |
 
 Web Tools 在 `extensions.astrcode-web-tools` 下配置（默认启用）：
 
@@ -270,8 +261,8 @@ AstrCode 使用存储在 `~/.astrcode/config.toml` 的 TOML 配置系统。配�
 
 ```
           ┌───────────────────────┐  ┌───────────┐
-          │       Web UI          │  │ ACP 客户端 │
-          │  gpui + WebAssembly   │  │  (stdio)  │
+          │ 桌面 App (GPUI)       │  │ ACP 客户端 │
+          │ Web UI (wasm)         │  │  (stdio)  │
           └───────────┬───────────┘  └─────┬─────┘
                       │ SSE / JSON-RPC      │ ACP JSON-RPC
                       │                     │ over stdio
@@ -303,8 +294,9 @@ AstrCode 使用存储在 `~/.astrcode/config.toml` 的 TOML 配置系统。配�
                    ┌──────────────────┴─────────┐
                    │ 扩展层                       │
                    │ bundled-extensions          │
-                   │ astrcode-extension-coding   │
-                   │ mode · goal · skill · todo  │
+                   │ coding · ask-user · goal    │
+                   │ ralph · skill · todo        │
+                   │ kanban · session-commands   │
                    │ agent-tools · mcp · memory  │
                    │ web-tools + IPC             │
                    └────────────────────────────┘
@@ -317,7 +309,7 @@ AstrCode 使用存储在 `~/.astrcode/config.toml` 的 TOML 配置系统。配�
 
 ## Crate 一览
 
-Cargo workspace 在 [`crates/`](crates/) 下包含 **31 个 crate**。按架构分层如下（详见[架构设计](docs/architecture.md)）。
+Cargo workspace 在 [`crates/`](crates/) 下包含 **33 个 crate**。按架构分层如下（详见[架构设计](docs/architecture.md)）。
 
 ### Layer 0：基础契约层
 
@@ -326,6 +318,7 @@ Cargo workspace 在 [`crates/`](crates/) 下包含 **31 个 crate**。按架构�
 | [`astrcode-core`](crates/astrcode-core) | 共享领域类型、trait、配置系统与提示词组合 |
 | [`astrcode-session-projection`](crates/astrcode-session-projection) | 纯 durable-event reducer 与 session read model |
 | [`astrcode-protocol`](crates/astrcode-protocol) | JSON-RPC 2.0 线协议类型、命令、事件与 HTTP/UI DTO |
+| [`astrcode-paths`](crates/astrcode-paths) | 跨 workspace 共享的进程级目录原语，由 `astrcode-core` defaults re-export |
 
 ### Layer 1：基础能力实现层
 
@@ -347,6 +340,7 @@ Cargo workspace 在 [`crates/`](crates/) 下包含 **31 个 crate**。按架构�
 | Crate | 说明 |
 |---|---|
 | [`astrcode-extension-sdk`](crates/astrcode-extension-sdk) | 扩展作者 API，以及共享的 S5R wire、帧、Peer 与 Host operation 契约 |
+| [`astrcode-s5r-runtime`](crates/astrcode-s5r-runtime) | S5R 子进程运行时：宿主与 worker 共用的 Peer 状态机与 I/O driver |
 | [`astrcode-extension-worker`](crates/astrcode-extension-worker) | S5R 子进程 worker 运行时、handler 分发与远程类型化 `HostClient` |
 | [`astrcode-extensions`](crates/astrcode-extensions) | 宿主侧扩展生命周期、钩子分发、能力门控与磁盘 IPC 加载 |
 | [`astrcode-bundled-extensions`](crates/astrcode-bundled-extensions) | 组合根：注册全部第一方扩展 crate |
@@ -372,6 +366,9 @@ Cargo workspace 在 [`crates/`](crates/) 下包含 **31 个 crate**。按架构�
 
 | Crate | 说明 |
 |---|---|
+| [`astrcode-gui`](crates/astrcode-gui) | GPUI Kit 桌面 App：进程内引导 server 并承载共享 UI 层 |
+| [`astrcode-webui`](crates/astrcode-webui) | 共享 UI 层的 Web（wasm）宿主；产物经 `rust-embed` 内嵌进 server 二进制 |
+| [`astrcode-ui`](crates/astrcode-ui) | 宿主无关的共享 UI 层（视图、会话状态、主题），桌面 App 与 Web UI 共用 |
 | [`astrcode-cli`](crates/astrcode-cli) | CLI 入口：无头 exec、server 与 ACP 启动器 |
 
 ### Layer 6：辅助评测层
@@ -478,6 +475,7 @@ Identity → System → Task Guidelines → Communication → Environment
 |---|---|---|
 | **Exec** | `cargo run -- exec "提示词"` | 无头单次执行，支持 `--jsonl` |
 | **Server** | `cargo run -- server [--addr 0.0.0.0:3847]` | HTTP/SSE 服务器，支持 JSON-RPC、会话管理、实时事件流 |
+| **桌面 App** | `cargo run -p astrcode-gui` | GPUI Kit 桌面 App；进程内引导 HTTP/SSE server（绑定随机本地端口） |
 | **ACP** | `cargo run -- acp` | ACP stdio 适配器，用于 IDE/编辑器集成 |
 | **Eval** | `cargo run --features dev-mode -- eval` | 运行评测基准（需要 `dev-mode` feature） |
 | **Web** | `scripts/build.sh` 后打开 `http://127.0.0.1:3847` | 浏览器 UI；产物在编译期内嵌进二进制，无需单独部署 |
@@ -495,15 +493,7 @@ Identity → System → Task Guidelines → Communication → Environment
 | [设计:Provider 请求改写链](docs/provider-request-rewrite-chain-design.md) | 统一的链式请求改写原语 |
 | [架构:统一 Extension 工具运行时](docs/architecture/unified-extension-tool-runtime.md) | 统一扩展工具运行时边界与迁移记录 |
 | [架构:S5R 3.0 实现](docs/architecture/s5r-3-implementation.md) | S5R 3.0 实现决策与状态 |
-| [发布指南](docs/release.md) | 版本同步、发布 workflow、npm/GitHub 分发 |
-
-## 发行
-
-每个版本标签自动触发 GitHub Release，提供 Linux、macOS、Windows（x86_64 + aarch64）的预编译二进制文件。手动发版应使用 `Release` workflow，确保版本元数据、tag、npm 包和 GitHub 资产保持一致。每周 workflow 仅在上个版本后有新提交时发布 patch 版本。
-
-**NPM 包**：[`@whatevertogo/astrcode`](https://www.npmjs.com/package/@whatevertogo/astrcode)
-
-发布检查清单见[发布指南](docs/release.md)。
+| [发布指南](docs/release.md) | 版本同步与发布流程 |
 
 ## 致谢
 
