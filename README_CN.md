@@ -7,7 +7,7 @@
 
 | 界面 | 预览 |
 |------|------|
-| **Web UI** | <img width="1197" height="805" alt="image" src="https://github.com/user-attachments/assets/9c8d96e1-61df-4e3e-8139-34a8b1b3aaef" /> |
+| **Web UI** | <img width="1280" alt="Web UI 预览" src="docs/assets/webui-preview.png" /> |
 
 用 Rust 从零构建的 AI 编程助手平台。
 

@@ -7,7 +7,7 @@
 
 | Interface | Preview |
 |-----------|---------|
-| **Web UI** | <img width="1197" height="805" alt="image" src="https://github.com/user-attachments/assets/5ee17441-e478-476e-b8f5-f426e1ff1867" /> |
+| **Web UI** | <img width="1280" alt="Web UI preview" src="docs/assets/webui-preview.png" /> |
 
 A Rust-built AI coding agent platform.
 
