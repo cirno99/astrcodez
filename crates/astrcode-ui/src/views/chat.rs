@@ -180,7 +180,7 @@ pub struct ChatView {
     error: Option<String>,
     /// 事件流消费任务；换会话时整体丢弃以停掉旧流。
     stream_task: Option<Task<()>>,
-    /// 刚复制过的回合键；按钮据此把「复制」显示成「已复制」。
+    /// 刚复制过的文本键（回合或提示块）；按钮据此把「复制」显示成「已复制」。
     copied: Option<String>,
     /// 「已复制」的回落任务；再复制一次即换掉它，上一次的回落随之取消。
     copy_timer: Option<Task<()>>,
@@ -750,7 +750,7 @@ impl ChatView {
     }
 
 
-    /// 把回合正文写进剪贴板，按钮随即切成「已复制」，两秒后落回。
+    /// 把一段转录文本写进剪贴板，按钮随即切成「已复制」，两秒后落回。
     fn copy_run(&mut self, key: &str, text: String, cx: &mut Context<Self>) {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
         self.copied = Some(key.to_owned());
@@ -1640,20 +1640,31 @@ impl ChatView {
                 self.render_run(&Run::new(block_id(block), std::slice::from_ref(block)), cx)
             },
 
-            ConversationBlockDto::Error { message, .. } => div()
-                .border_l_2()
-                .border_color(cx.theme().danger)
-                .pl_3()
-                .py_1()
-                .text_color(cx.theme().danger)
-                .child(message.clone())
-                .into_any_element(),
-            ConversationBlockDto::Recap { text, .. }
-            | ConversationBlockDto::SystemNote { text, .. } => div()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child(text.clone())
-                .into_any_element(),
+            // 纯文本提示块：命令输出、回合回顾、错误。三者共用一条路径——正文显示什么，
+            // 复制按钮就复制什么。正文本身不给选区，理由见 `render_note_actions`。
+            ConversationBlockDto::Error { message, .. }
+            | ConversationBlockDto::Recap { text: message, .. }
+            | ConversationBlockDto::SystemNote { text: message, .. } => {
+                let is_error = matches!(block, ConversationBlockDto::Error { .. });
+                let container = if is_error {
+                    v_flex()
+                        .border_l_2()
+                        .border_color(cx.theme().danger)
+                        .pl_3()
+                        .py_1()
+                } else {
+                    v_flex()
+                };
+                let body = if is_error {
+                    div().text_color(cx.theme().danger)
+                } else {
+                    div().text_sm().text_color(cx.theme().muted_foreground)
+                };
+                container
+                    .child(body.child(message.clone()))
+                    .child(self.render_note_actions(block_id(block), message.clone(), cx))
+                    .into_any_element()
+            },
             ConversationBlockDto::CompactSummary {
                 summary,
                 pre_tokens,
@@ -1675,6 +1686,32 @@ impl ChatView {
                 )
                 .into_any_element(),
         }
+    }
+
+    /// 提示块的复制入口：一键把整块文本写进剪贴板，按钮随即切成「已复制」。
+    ///
+    /// 这些块是纯文本、不走 markdown，所以没有可选中的正文——选区只在 markdown 格式的
+    /// `TextView` 上（见 `sync_markdown`），改用它会把命令输出的对齐与围栏重排一遍，
+    /// 展示就变了。因此这里给的是显式入口，而不是选区。
+    fn render_note_actions(&self, key: &str, text: String, cx: &mut Context<Self>) -> AnyElement {
+        let copied = self.copied.as_deref() == Some(key);
+        let copy_key = key.to_owned();
+        h_flex()
+            .items_center()
+            .gap_1()
+            .pt_1()
+            .child(
+                Button::new(SharedString::from(format!("note-copy-{key}")))
+                    .ghost()
+                    .small()
+                    .icon(IconName::Copy.element(Size::Small))
+                    .label(if copied { "已复制" } else { "复制" })
+                    .tooltip("复制这段文本")
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.copy_run(&copy_key, text.clone(), cx);
+                    })),
+            )
+            .into_any_element()
     }
 
     /// 一次助手回合：过程段收成一行摘要，正文段直接铺开，末尾挂回合级动作。
