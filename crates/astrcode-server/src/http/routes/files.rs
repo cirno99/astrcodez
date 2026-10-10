@@ -1,4 +1,4 @@
-//! 代码浏览路由：目录列举、文件读取、相对 git HEAD 的改动与整份工作区清单。
+//! 代码浏览路由：目录列举、文件读取、工作区全局搜索、相对 git HEAD 的改动与整份工作区清单。
 //!
 //! 只有 wire 适配：参数从查询串进来，结果映射回 DTO。文件系统语义与路径校验都在
 //! [`crate::file_browser`] 里，这一层不重复实现。
@@ -6,7 +6,8 @@
 use std::path::PathBuf;
 
 use astrcode_protocol::http::{
-    FileContentResponseDto, FileDiffResponseDto, FileTreeResponseDto, GitStatusResponseDto,
+    FileContentResponseDto, FileDiffResponseDto, FileSearchResponseDto, FileTreeResponseDto,
+    GitStatusResponseDto,
 };
 use axum::{
     Json,
@@ -63,6 +64,27 @@ pub(in crate::http) async fn file_status(Query(query): Query<RootQuery>) -> Resp
     let root = PathBuf::from(&query.root);
     match file_browser::worktree_status(&root).await {
         Ok(response) => Json::<GitStatusResponseDto>(response).into_response(),
+        Err(error) => browser_error_response(error),
+    }
+}
+
+/// 全局搜索的查询参数。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(in crate::http) struct SearchQuery {
+    /// 浏览根目录，由客户端给（项目工作目录）。
+    root: String,
+    /// 字面量查询串；空串按「没有命中」处理。
+    query: String,
+    /// 是否区分大小写；缺省不区分。
+    #[serde(default)]
+    case_sensitive: bool,
+}
+
+pub(in crate::http) async fn file_search(Query(query): Query<SearchQuery>) -> Response {
+    let root = PathBuf::from(&query.root);
+    match file_browser::search(&root, &query.query, query.case_sensitive).await {
+        Ok(response) => Json::<FileSearchResponseDto>(response).into_response(),
         Err(error) => browser_error_response(error),
     }
 }

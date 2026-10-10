@@ -34,6 +34,10 @@ pub(crate) struct Run<'a> {
     pub(crate) segments: Vec<RunSegment<'a>>,
     /// 回合级的两个动作；收尾不是完稿正文时为 `None`。
     pub(crate) actions: Option<RunActions>,
+    /// 组成这一回合的块，顺序与转录一致。
+    ///
+    /// 段与动作都是它们的推导结果，而查找要的是原始文本：思考的正文在块上，不在段里。
+    pub(crate) blocks: &'a [ConversationBlockDto],
 }
 
 /// 「复制此 Turn」与「从此 Turn 分叉」的输入。
@@ -51,6 +55,7 @@ impl<'a> Run<'a> {
             key: key.to_owned(),
             segments: run_segments(blocks),
             actions: run_actions(blocks),
+            blocks,
         }
     }
 }
@@ -348,6 +353,48 @@ pub(crate) fn visible_text(block: &ConversationBlockDto) -> String {
         return text.trim().to_owned();
     }
     extract_thinking(text).visible
+}
+
+/// 一个块里可查找的文本：转录上看得见的东西。
+///
+/// 查找要回答的是「我见过的那句话在哪」，因此取的就是展示用的文本：思考、正文、工具名与参数、
+/// 工具结果、错误与提示。折叠区里的正文也在其中——它只是被折起来，不是不在。
+///
+/// 与 [`visible_text`] 分开：那个只回答「助手块说了什么」，要被拼进复制与分叉的输入里。
+pub(crate) fn searchable_text(block: &ConversationBlockDto) -> String {
+    match block {
+        ConversationBlockDto::User { text, .. } => text.clone(),
+        ConversationBlockDto::Assistant {
+            reasoning_content, ..
+        } => match reasoning_content {
+            // 思考与正文是两段文字，中间补一个换行，免得两段粘成一个词。
+            Some(reasoning) => format!("{reasoning}\n{}", visible_text(block)),
+            None => visible_text(block),
+        },
+        ConversationBlockDto::ToolCall {
+            name,
+            arguments,
+            text,
+            ..
+        } => format!("{name}\n{arguments}\n{text}"),
+        ConversationBlockDto::Error { message, .. } => message.clone(),
+        ConversationBlockDto::Recap { text, .. } => text.clone(),
+        ConversationBlockDto::SystemNote { text, .. } => text.clone(),
+        ConversationBlockDto::CompactSummary { summary, .. } => summary.clone(),
+    }
+}
+
+/// 一项转录里可查找的文本：项内各块之间补换行。
+pub(crate) fn transcript_item_text(item: &TranscriptItem<'_>) -> String {
+    let blocks: &[ConversationBlockDto] = match item {
+        TranscriptItem::Block(block) => std::slice::from_ref(*block),
+        TranscriptItem::Run(run) => run.blocks,
+    };
+    blocks
+        .iter()
+        .map(searchable_text)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// 回合级的两个动作的输入；收尾不是完稿正文时为 `None`。

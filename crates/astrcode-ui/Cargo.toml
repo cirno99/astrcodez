@@ -39,6 +39,8 @@ rustc-hash = { workspace = true }
 # 语法高亮器收 `ropey::Rope`，而 gpui-component 把版本钉死在这个 beta 上；
 # 只有取同一个版本，两边看到的才是同一个 `Rope` 类型。
 ropey = "=2.0.0-beta.1"
+# 双栏变更视图逐行对齐用：与服务端算 diff 的是同一份算法与版本。
+similar = { workspace = true }
 
 [dev-dependencies]
 gpui-kit = { version = "0.7.1", features = ["test-support"] }

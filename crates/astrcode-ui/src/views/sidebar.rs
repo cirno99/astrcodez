@@ -6,13 +6,15 @@
 
 use astrcode_protocol::http::SessionListItemDto;
 use gpui_kit::{
-    AnyElement, Context, EventEmitter, FontWeight, InteractiveElement as _, IntoElement,
-    MouseButton, MouseDownEvent, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Window,
+    AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FontWeight,
+    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, ParentElement as _, Render,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window,
     component::{
         ActiveTheme as _, Disableable as _, Size,
         button::{Button, ButtonVariants as _},
-        h_flex, v_flex,
+        h_flex,
+        input::{Input, InputEvent, InputState},
+        v_flex,
     },
     div, px, radians,
 };
@@ -93,14 +95,27 @@ pub struct Sidebar {
     selected_ids: Vec<String>,
     /// 批量删除是否已经点了删除、正在等确认。
     confirm_batch_delete: bool,
+    /// 会话列表的筛选框：按会话名过滤行，不动列表本身。
+    query: Entity<InputState>,
     menu: Option<ContextMenu>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<SidebarEvent> for Sidebar {}
 
 impl Sidebar {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.notify();
+        let query = cx.new(|cx| InputState::new(window, cx).placeholder("筛选会话…"));
+        // 筛选是渲染时现算的，这里只管重画。
+        let subscriptions =
+            vec![
+                cx.subscribe_in(&query, window, |_, _, event: &InputEvent, _, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        cx.notify();
+                    }
+                }),
+            ];
         Self {
             sessions: Vec::new(),
             project_order: Vec::new(),
@@ -114,8 +129,16 @@ impl Sidebar {
             select_mode: false,
             selected_ids: Vec::new(),
             confirm_batch_delete: false,
+            query,
             menu: None,
+            _subscriptions: subscriptions,
         }
+    }
+
+    /// 按筛选框里的查询串过滤会话；空查询串给全部。
+    fn filtered_sessions(&self, cx: &App) -> Vec<SessionListItemDto> {
+        let needle = self.query.read(cx).value().trim().to_owned();
+        session_list::filter_sessions(&self.sessions, &needle)
     }
 
     pub fn set_sessions(&mut self, sessions: Vec<SessionListItemDto>, cx: &mut Context<Self>) {
@@ -259,11 +282,16 @@ impl Sidebar {
     }
 
     /// 进入选择态：右键菜单与上一次的确认都作废，勾选从空开始。
-    fn enter_select_mode(&mut self, cx: &mut Context<Self>) {
+    ///
+    /// 筛选框在这一态里不显示，因此把它的查询串一并清掉：「全选」按整份列表算，留着一个
+    /// 看不见的筛选，行与勾选就对不上了。
+    fn enter_select_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.close_menu();
         self.confirm_batch_delete = false;
         self.selected_ids.clear();
         self.select_mode = true;
+        self.query
+            .update(cx, |state, cx| state.set_value("", window, cx));
         cx.notify();
     }
 
@@ -393,10 +421,12 @@ impl Sidebar {
                     Button::new("select-sessions")
                         .ghost()
                         .label("选择")
-                        .on_click(cx.listener(|this, _, _, cx| this.enter_select_mode(cx))),
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.enter_select_mode(window, cx)),
+                        ),
                 );
         }
-        h_flex()
+        let header = h_flex()
             .items_center()
             .justify_between()
             .gap_2()
@@ -408,7 +438,31 @@ impl Sidebar {
                     .text_color(cx.theme().muted_foreground)
                     .child("会话"),
             )
-            .child(actions)
+            .child(actions);
+        v_flex()
+            .child(header)
+            .child(self.render_filter_input())
+            .into_any_element()
+    }
+
+    /// 筛选框：独占一行，铺满列表宽度。
+    fn render_filter_input(&self) -> AnyElement {
+        div()
+            .w_full()
+            .px_2()
+            .pb_1()
+            .child(Input::new(&self.query))
+            .into_any_element()
+    }
+
+    /// 筛选之后一条都不剩时的一句说明。
+    fn render_empty_note(&self, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .px_2()
+            .py_1()
+            .text_xs()
+            .text_color(cx.theme().muted_foreground)
+            .child("没有匹配的会话。")
             .into_any_element()
     }
 
@@ -506,8 +560,11 @@ impl Sidebar {
     }
 
     /// 一个项目分组：组头（名字 + 折叠箭头）与组内会话。
+    ///
+    /// `sessions` 是当前摆出来的那一份（筛选之后的那份），组里的下标指的是它。
     fn render_project_group(
         &self,
+        sessions: &[SessionListItemDto],
         group: &session_list::ProjectGroup,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -530,7 +587,7 @@ impl Sidebar {
         let latest = group
             .session_indices
             .first()
-            .map(|index| self.sessions[*index].session_id.clone());
+            .map(|index| sessions[*index].session_id.clone());
         let working_dir = group.working_dir.clone();
         let toggle_dir = working_dir.clone();
         let menu_dir = working_dir.clone();
@@ -609,7 +666,7 @@ impl Sidebar {
             let rows: Vec<AnyElement> = group
                 .session_indices
                 .iter()
-                .map(|index| self.render_session_row(&self.sessions[*index], cx))
+                .map(|index| self.render_session_row(&sessions[*index], cx))
                 .collect();
             column = column.child(v_flex().w_full().pl_6().children(rows));
         }
@@ -839,11 +896,18 @@ fn render_selection_checkbox(checked: bool, cx: &Context<Sidebar>) -> AnyElement
 
 impl Render for Sidebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let groups = session_list::group_sessions(&self.sessions, &self.project_order);
+        // 筛选只作用于行：分组顺序、折叠集合、当前会话都仍按整份列表算。
+        let visible = self.filtered_sessions(cx);
+        let groups = session_list::group_sessions(&visible, &self.project_order);
         let rows: Vec<AnyElement> = groups
             .iter()
-            .map(|group| self.render_project_group(group, cx))
+            .map(|group| self.render_project_group(&visible, group, cx))
             .collect();
+        let mut session_list_items = v_flex().px_3().py_2().child(self.render_list_header(cx));
+        if rows.is_empty() && !self.sessions.is_empty() {
+            session_list_items = session_list_items.child(self.render_empty_note(cx));
+        }
+        let session_list_items = session_list_items.children(rows);
 
         let mut nav = v_flex()
             .gap_1()
@@ -906,13 +970,7 @@ impl Render for Sidebar {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .child(
-                        v_flex()
-                            .px_3()
-                            .py_2()
-                            .child(self.render_list_header(cx))
-                            .children(rows),
-                    ),
+                    .child(session_list_items),
             );
 
         if let Some(error) = &self.error {

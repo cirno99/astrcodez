@@ -55,6 +55,25 @@ pub(crate) fn session_label(item: &SessionListItemDto) -> String {
         .unwrap_or_else(|| NEW_SESSION_LABEL.to_owned())
 }
 
+/// 按查询串筛出会话：比的是行上写着的那串文字（首条用户消息或标题），大小写不敏感。
+///
+/// 空查询串给整份列表的副本：调用方拿到的那一份要拿去分组，组里的下标指的是它。
+pub(crate) fn filter_sessions(
+    sessions: &[SessionListItemDto],
+    needle: &str,
+) -> Vec<SessionListItemDto> {
+    if needle.is_empty() {
+        return sessions.to_vec();
+    }
+    sessions
+        .iter()
+        .filter(|item| {
+            !crate::find::literal_matches(&session_label(item), needle, false).is_empty()
+        })
+        .cloned()
+        .collect()
+}
+
 /// 按 `project_order` 给出分组：顺序里没有的目录按在列表里出现的先后追加在末尾。
 ///
 /// 组内按最近使用降序（`updated_at`，相同则 `created_at`），与前端
@@ -329,6 +348,34 @@ mod tests {
         item.first_user_message = Some("先看这段\n\n再看  下一段\t结尾".to_owned());
         assert_eq!(session_label(&item), "先看这段 再看 下一段 结尾");
         assert_eq!(single_line("  \n "), "");
+    }
+
+    #[test]
+    fn filtering_matches_the_row_label_ignoring_case() {
+        let mut asked = session("a1", "/w/alpha", "2026-01-01", "2026-01-01");
+        asked.first_user_message = Some("修一下 Value 的解析".to_owned());
+        let mut titled = session("b1", "/w/beta", "2026-01-01", "2026-01-01");
+        titled.title = "重构侧边栏".to_owned();
+        let fresh = session("c1", "/w/beta", "2026-01-01", "2026-01-01");
+        let sessions = vec![asked, titled, fresh];
+
+        let ids = |found: &[SessionListItemDto]| {
+            found
+                .iter()
+                .map(|item| item.session_id.clone())
+                .collect::<Vec<_>>()
+        };
+
+        // 空查询串给全部（顺序原样）。
+        assert_eq!(ids(&filter_sessions(&sessions, "")), ["a1", "b1", "c1"]);
+        // 大小写不敏感。
+        assert_eq!(ids(&filter_sessions(&sessions, "value")), ["a1"]);
+        assert_eq!(ids(&filter_sessions(&sessions, "侧边栏")), ["b1"]);
+        // 比的是行上写着的那串文字，不是工作目录。
+        assert!(filter_sessions(&sessions, "alpha").is_empty());
+        // 还没内容的会话按占位名找得到。
+        assert_eq!(ids(&filter_sessions(&sessions, NEW_SESSION_LABEL)), ["c1"]);
+        assert!(filter_sessions(&sessions, "没有这个").is_empty());
     }
 
 

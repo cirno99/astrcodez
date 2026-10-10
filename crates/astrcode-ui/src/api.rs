@@ -16,14 +16,14 @@ use astrcode_protocol::{
         ConfigViewResponseDto, ConversationSnapshotResponseDto, ConversationStreamEnvelopeDto,
         CreateSessionRequest, CreateSessionResponseDto, CurrentModelResponseDto,
         DeleteProjectResponseDto, ExtensionListResponseDto, ExtensionReloadResponseDto,
-        FileContentResponseDto, FileDiffResponseDto, FileTreeResponseDto, ForkSessionRequest,
-        GitStatusResponseDto, ModelListResponseDto, ModelTestResponseDto, PromptRequest,
-        PromptSubmitResponse, ProviderCatalogResponseDto, RemoveProviderPresetRequest,
-        RemoveProviderPresetResponseDto, SessionListItemDto, SessionListResponseDto,
-        SetExtensionEnabledRequest, SetExtensionEnabledResponseDto, SlashCommandListResponseDto,
-        ToolApprovalRequest, UiPreferencesResponseDto, UpdateActiveSelectionRequest,
-        UpdateActiveSelectionResponseDto, UpdateModelOptionsRequest, UpdateModelOptionsResponseDto,
-        UpdateUiPreferencesRequest,
+        FileContentResponseDto, FileDiffResponseDto, FileSearchResponseDto, FileTreeResponseDto,
+        ForkSessionRequest, GitStatusResponseDto, ModelListResponseDto, ModelTestResponseDto,
+        PromptRequest, PromptSubmitResponse, ProviderCatalogResponseDto,
+        RemoveProviderPresetRequest, RemoveProviderPresetResponseDto, SessionListItemDto,
+        SessionListResponseDto, SetExtensionEnabledRequest, SetExtensionEnabledResponseDto,
+        SlashCommandListResponseDto, ToolApprovalRequest, UiPreferencesResponseDto,
+        UpdateActiveSelectionRequest, UpdateActiveSelectionResponseDto, UpdateModelOptionsRequest,
+        UpdateModelOptionsResponseDto, UpdateUiPreferencesRequest,
     },
     wire::ApprovalDecisionDto,
 };
@@ -406,6 +406,17 @@ impl Api {
         self.get_json(&files_root_url("/status", root)).await
     }
 
+    /// 在工作区里按字面量搜 `query`，按文件分组返回命中行。
+    pub async fn file_search(
+        &self,
+        root: &str,
+        query: &str,
+        case_sensitive: bool,
+    ) -> Result<FileSearchResponseDto, ApiError> {
+        self.get_json(&file_search_url(root, query, case_sensitive))
+            .await
+    }
+
     /// 订阅会话事件流。`cursor` 为空表示从当前快照之后开始。
     pub async fn subscribe(
         &self,
@@ -575,6 +586,19 @@ fn files_root_url(endpoint: &str, root: &str) -> String {
         .append_pair("root", root)
         .finish();
     format!("/api/files{endpoint}?{query}")
+}
+
+/// 全局搜索的 URL：根目录与查询串都由用户给，字符集不受我们控制，两者都过一遍百分号编码。
+fn file_search_url(root: &str, query: &str, case_sensitive: bool) -> String {
+    let search = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("root", root)
+        .append_pair("query", query)
+        .append_pair(
+            "caseSensitive",
+            if case_sensitive { "true" } else { "false" },
+        )
+        .finish();
+    format!("/api/files/search?{search}")
 }
 
 /// 只关心成败的请求：非 2xx 带上响应体转成 [`ApiError::Status`]。

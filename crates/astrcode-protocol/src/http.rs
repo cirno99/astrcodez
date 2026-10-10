@@ -1261,6 +1261,10 @@ pub struct FileDiffResponseDto {
     pub state: FileChangeStateDto,
     /// 统一 diff 文本；只有 `Modified` 与 `Untracked` 会带正文。
     pub unified_diff: String,
+    /// HEAD 侧的正文，供界面逐行对齐；HEAD 里没有这个路径（新文件）时为空串。
+    pub original: String,
+    /// `original` 超出单次返回上限，已被截断。
+    pub original_truncated: bool,
     pub insertions: usize,
     pub deletions: usize,
     /// diff 超出单次返回上限，`unified_diff` 被截断。
@@ -1320,6 +1324,40 @@ pub struct GitStatusResponseDto {
     pub entries: Vec<GitStatusEntryDto>,
     /// 改动条目超出单次返回上限，`entries` 只是前面的一部分。
     pub truncated: bool,
+}
+
+/// GET /api/files/search 的响应：整个工作区里匹配查询串的位置。
+///
+/// 按文件分组，命中在文件内按行号升序——界面按文件列出一组命中，同一份文件的路径因此只上
+/// 一次线缆。文件的先后是遍历顺序（同一目录内按名字排），同一次搜索的结果是稳定的。
+/// `truncated` 为真表示命中或文件数触到了上限，后面还有没返回的部分。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileSearchResponseDto {
+    pub files: Vec<FileSearchFileDto>,
+    pub truncated: bool,
+}
+
+/// 一份文件里的全部命中。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileSearchFileDto {
+    /// 相对浏览根目录的路径，分隔符统一为 `/`。
+    pub path: String,
+    pub matches: Vec<FileSearchMatchDto>,
+}
+
+/// 一处命中。
+///
+/// `text` 是命中所在行；整行太长时只给命中附近的一段，`column` 因此是命中相对**返回的这一段**
+/// 的字节偏移：界面拿 `column` 与查询串长度直接画高亮，不必自己再找一遍。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileSearchMatchDto {
+    /// 行号，从 1 起。
+    pub line: usize,
+    pub column: usize,
+    pub text: String,
 }
 
 #[cfg(test)]

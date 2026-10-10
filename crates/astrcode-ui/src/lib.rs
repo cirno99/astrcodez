@@ -11,6 +11,7 @@ pub(crate) mod assistant_run;
 pub(crate) mod composer_config;
 pub(crate) mod composer_queue;
 pub mod conversation;
+pub(crate) mod find;
 pub(crate) mod icons;
 pub mod kanban;
 pub(crate) mod metrics;

@@ -29,9 +29,9 @@ use astrcode_protocol::{
         ApplyProviderPresetResponseDto, CommandCompletionResponse, CompactSessionResponse,
         ConfigureSessionToolsResponse, ConversationBlockDto, ConversationItemsPageResponseDto,
         ConversationSnapshotResponseDto, ConversationStateResponseDto, CreateSessionResponseDto,
-        CustomEventConsumerListResponseDto, CustomEventConsumerStatusDto, PromptSubmitResponse,
-        ProviderCatalogResponseDto, SlashCommandListResponseDto, ToolSelectionDto,
-        UiPreferencesResponseDto,
+        CustomEventConsumerListResponseDto, CustomEventConsumerStatusDto, FileSearchResponseDto,
+        PromptSubmitResponse, ProviderCatalogResponseDto, SlashCommandListResponseDto,
+        ToolSelectionDto, UiPreferencesResponseDto,
     },
     wire::{ProviderAuthSchemeDto, ProviderWireFormatDto},
 };
@@ -224,6 +224,44 @@ async fn http_routes_do_not_require_auth_token() {
         .await
         .unwrap();
     assert_eq!(no_auth.status(), StatusCode::OK);
+}
+
+/// 全局搜索的线缆契约：查询串按字面量匹配（`a.b(c)` 里的元字符不算正则），`caseSensitive`
+/// 这个 camelCase 参数确实被读到，命中带回行号与列偏移。
+#[tokio::test]
+async fn file_search_returns_literal_matches_and_honours_case_sensitive() {
+    let runtime = runtime(Arc::new(immediate_llm())).await;
+    let app = router(Arc::clone(&runtime)).unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("alpha.rs"), "let Value = a.b(c);\n").unwrap();
+
+    let sensitive = get_json::<FileSearchResponseDto>(
+        app.clone(),
+        &format!(
+            "/api/files/search?root={}&query=value&caseSensitive=true",
+            dir.path().display()
+        ),
+    )
+    .await;
+    assert!(
+        sensitive.files.is_empty(),
+        "区分大小写时 `value` 不该命中 `Value`"
+    );
+
+    let literal = get_json::<FileSearchResponseDto>(
+        app,
+        &format!(
+            "/api/files/search?root={}&query=a.b(c)",
+            dir.path().display()
+        ),
+    )
+    .await;
+    assert_eq!(literal.files.len(), 1);
+    assert_eq!(literal.files[0].path, "alpha.rs");
+    let hit = &literal.files[0].matches[0];
+    assert_eq!(hit.line, 1);
+    assert_eq!(&hit.text[hit.column..hit.column + "a.b(c)".len()], "a.b(c)");
 }
 
 #[tokio::test]

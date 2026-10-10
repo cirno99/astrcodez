@@ -40,6 +40,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 rustc-hash = { workspace = true }
 similar = { workspace = true }
+ignore = { workspace = true }
+grep-matcher = { workspace = true }
+grep-regex = { workspace = true }
+grep-searcher = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

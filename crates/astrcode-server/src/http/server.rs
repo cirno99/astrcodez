@@ -161,6 +161,7 @@ fn router_parts(server_app: Arc<ServerApp>) -> RouterParts {
         .route("/api/files/content", get(files::file_content))
         .route("/api/files/diff", get(files::file_diff))
         .route("/api/files/status", get(files::file_status))
+        .route("/api/files/search", get(files::file_search))
         .route("/api/extensions", get(extensions::list_extensions))
         .route(
             "/api/extensions/reload",

@@ -83,9 +83,9 @@ pub struct Shell {
 
 impl Shell {
     pub fn new(api: Api, working_dir: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let sidebar = cx.new(Sidebar::new);
+        let sidebar = cx.new(|cx| Sidebar::new(window, cx));
         let chat = cx.new(|cx| ChatView::new(api.clone(), window, cx));
-        let code = cx.new(|cx| CodeView::new(api.clone(), cx));
+        let code = cx.new(|cx| CodeView::new(api.clone(), window, cx));
         let kanban = cx.new(|_| KanbanView::new(api.clone()));
         let settings = cx.new(|cx| SettingsView::new(api.clone(), window, cx));
         // 侧边栏一开始是显示的，四个主区域的页头因此都不挂展开入口。

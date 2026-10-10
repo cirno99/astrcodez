@@ -11,8 +11,9 @@
 use std::ops::Range;
 
 use gpui_kit::{
-    AnyElement, App, HighlightStyle, Hsla, IntoElement, ParentElement as _, SharedString,
-    Styled as _, Window,
+    AnyElement, App, FocusHandle, HighlightStyle, Hsla, InteractiveElement as _, IntoElement,
+    MouseButton, ParentElement as _, Pixels, ScrollHandle, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Window,
     component::{
         ActiveTheme as _, h_flex,
         highlighter::{HighlightTheme, SyntaxHighlighter},
@@ -31,10 +32,21 @@ use super::{annotate::LineChange, selectable::SelectableLine};
 pub(super) const MAX_RENDERED_LINES: usize = 2000;
 
 /// 行号槽的宽度。
-const GUTTER_WIDTH: f32 = 44.0;
+pub(super) const GUTTER_WIDTH: f32 = 44.0;
 
 /// 变更标记条的宽度。
 const MARK_WIDTH: f32 = 3.0;
+
+/// 正文栏的纵向内边距：上下各留这么多，滚到顶、滚到底时不贴边。
+///
+/// 换行号与像素的那份换算要用同一个值（见 [`visible_rows`]），否则滚动位置会慢慢错开。
+pub(super) const VERTICAL_PADDING: f32 = 8.0;
+
+/// 可视区上下各多渲染的行数。
+///
+/// 行高按 [`visible_rows`] 估，与真实排版的行高可能差零点几像素；两侧各留几行，这点误差就落在
+/// 可视区之外，上下滚动时不会先在边缘露白。
+const OVERSCAN_ROWS: usize = 8;
 
 /// 按扩展名推断高亮语言；认不出来按纯文本。
 ///
@@ -123,21 +135,57 @@ pub(super) fn clip_to_line(
     clipped
 }
 
+/// 当前该渲染的行区间：由滚动偏移、视口高度、行高与总行数算出，两端各留 [`OVERSCAN_ROWS`] 行。
+///
+/// `offset_y` 收框架 `ScrollHandle` 的原始值：它向下是负数（滚过去多少像素即 `-offset_y`），
+/// 这里统一取反。偏移量可能还停在上一份正文的末尾（切文件时滚动位置不会自己回去），所以先按这份
+/// 正文的内容高度夹一次再算区间；视口高度未知时按 0 处理，只会多画几行。
+pub(super) fn visible_rows(
+    offset_y: f32,
+    viewport_height: f32,
+    line_height: f32,
+    total: usize,
+) -> Range<usize> {
+    if total == 0 || line_height <= 0.0 {
+        return 0..0;
+    }
+    let content_height = line_height * total as f32 + VERTICAL_PADDING * 2.0;
+    let scrolled = (-offset_y).clamp(0.0, (content_height - viewport_height).max(0.0));
+    let first = (((scrolled - VERTICAL_PADDING).max(0.0) / line_height) as usize).min(total - 1);
+    let visible = (viewport_height / line_height).ceil() as usize + 1;
+    first.saturating_sub(OVERSCAN_ROWS)..(first + visible + OVERSCAN_ROWS).min(total)
+}
+
+/// 一行上的两层着色：语法高亮在前，查找命中在后，重叠处让命中盖住语法色。
+///
+/// 两层都按**整份正文**给，逐行裁剪在 [`render_code`] 里做：整份只跑一次语法分析，比逐行各跑
+/// 一遍便宜得多。
+pub(super) struct LineLayers<'a> {
+    pub(super) syntax: &'a [(Range<usize>, HighlightStyle)],
+    pub(super) find: &'a [(Range<usize>, HighlightStyle)],
+}
+
 /// 渲染只读代码正文：每行一个「行号 + 变更标记 + 该行高亮文本」的横排。
 ///
 /// 三者同处一行，因此不会错位；正文不换行，超宽时由外层横向滚动。`changes` 的下标与行序一致
 /// （见 [`super::annotate::line_changes`]），比正文短的部分按「没变过」算。
+///
+/// 只渲染 `rows` 这一段：整份正文可能有几十万行，全铺出来会把帧时间拖垮（见 [`visible_rows`]）。
+/// 没渲染的行由上下两段留白占住高度，滚动条的量程因此仍与整份正文一致。
 pub(super) fn render_code(
     text: &str,
-    language: &str,
-    theme: &HighlightTheme,
+    lines: &[Range<usize>],
+    layers: LineLayers<'_>,
     changes: &[Option<LineChange>],
+    rows: Range<usize>,
     window: &Window,
     cx: &App,
 ) -> AnyElement {
-    let styles = highlight(text, language, theme);
-    let ranges = line_ranges(text);
-    let rendered = ranges.len().min(MAX_RENDERED_LINES);
+    let rendered = lines.len().min(MAX_RENDERED_LINES);
+    let line_height = window.line_height();
+    // 调用方按同一个总行数算的区间，这里再夹一次：越界下标取行文本会直接 panic。
+    let rows = rows.start.min(rendered)..rows.end.min(rendered);
+
     // 行号按最大行号的位数补空格：等宽字体下这等价于右对齐，且不依赖文本对齐 API。
     let digits = rendered.to_string().len();
 
@@ -146,8 +194,11 @@ pub(super) fn render_code(
     default_style.color = cx.theme().foreground;
 
     // 字号不在这里改：行号与正文必须同字号，两边都取窗口默认值就自然对齐。
-    let mut column = v_flex().w_full().min_w_0().py_2();
-    for (index, line) in ranges.iter().take(rendered).enumerate() {
+    let mut column = v_flex().w_full().min_w_0().child(vertical_space(
+        px(VERTICAL_PADDING) + line_height * rows.start as f32,
+    ));
+    for (index, line) in lines[rows.clone()].iter().enumerate() {
+        let number = rows.start + index;
         column = column.child(
             h_flex()
                 .w_full()
@@ -160,7 +211,7 @@ pub(super) fn render_code(
                         .pr_2()
                         .whitespace_nowrap()
                         .text_color(cx.theme().muted_foreground)
-                        .child(format!("{:>digits$}", index + 1)),
+                        .child(format!("{:>digits$}", number + 1)),
                 )
                 // 没变过的行也占住这一条：少画一列会让同一份正文的代码左右参差。
                 .child(
@@ -170,23 +221,27 @@ pub(super) fn render_code(
                         .mr_2()
                         .self_stretch()
                         .bg(changes
-                            .get(index)
+                            .get(number)
                             .copied()
                             .flatten()
                             .map_or_else(|| cx.theme().transparent, |change| change_color(change, cx))),
                 )
                 // 代码的缩进靠空格表达，且必须独占一行：换行会让行号与正文错位。
                 .child(div().min_w_0().whitespace_nowrap().child(SelectableLine::new(
-                    SharedString::from(format!("code-line-{index}")),
-                    index as u64,
+                    SharedString::from(format!("code-line-{number}")),
+                    number as u64,
                     text[line.clone()].to_owned(),
-                    clip_to_line(line, &styles),
+                    line_highlights(line, &layers),
                     default_style.clone(),
                 ))),
         );
     }
 
-    if ranges.len() > rendered {
+    column = column.child(vertical_space(
+        line_height * (rendered - rows.end) as f32 + px(VERTICAL_PADDING),
+    ));
+
+    if lines.len() > rendered {
         column = column.child(
             div()
                 .px_3()
@@ -196,6 +251,52 @@ pub(super) fn render_code(
         );
     }
     column.into_any_element()
+}
+
+/// 一行的样式：两层各自裁到这一行，再按 [`LineLayers`] 的次序拼起来。
+fn line_highlights(
+    line: &Range<usize>,
+    layers: &LineLayers<'_>,
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    let mut highlights = clip_to_line(line, layers.syntax);
+    highlights.extend(clip_to_line(line, layers.find));
+    highlights
+}
+
+/// 正文栏的滚动容器：两个方向都能滚、能拿焦点，里面的行参与窗口级文本选择。
+///
+/// 焦点不是装饰，是复制能不能用的前提：Ctrl+C 由窗口根节点（`gpui_kit::base::Root`）的 `Copy`
+/// 处理，按键要先被派发到某个节点，才有机会沿路径冒泡到根；一个焦点都没有时，按键的派发路径
+/// 只有派发树的根，那里既没有 `Root` 键上下文也没有 `Copy` 的监听者，按下去毫无反应。按下鼠标
+/// 时把焦点收到这一栏，路径才接得上。
+pub(super) fn pane_scroll(
+    focus: &FocusHandle,
+    scroll: &ScrollHandle,
+    body: AnyElement,
+) -> AnyElement {
+    let focus_on_click = focus.clone();
+    div()
+        .id("code-pane-scroll")
+        .flex_1()
+        .min_h_0()
+        .w_full()
+        .overflow_scroll()
+        .track_scroll(scroll)
+        .track_focus(focus)
+        .focusable()
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            window.focus(&focus_on_click, cx)
+        })
+        .child(body)
+        .into_any_element()
+}
+
+/// 一段纵向留白：替没有渲染的行占住高度。
+///
+/// 变更栏的双栏也用同一段留白（见 [`super::diff::render_aligned`]），两栏因此共用同一份
+/// 「按行高换算滚动位置」的口径。
+pub(super) fn vertical_space(height: Pixels) -> AnyElement {
+    div().flex_shrink_0().h(height).into_any_element()
 }
 
 /// 变更标记条的颜色：绿=新增、黄=改动、红=删除。
@@ -209,6 +310,11 @@ fn change_color(change: LineChange, cx: &App) -> Hsla {
 
 #[cfg(test)]
 mod tests {
+    use gpui_kit::{
+        AppContext as _, Context, Modifiers, MouseButton, Render, ScrollHandle, TestAppContext,
+        base::TextSelectionLayer, point, prelude::FluentBuilder as _,
+    };
+
     use super::*;
 
     #[test]
@@ -248,6 +354,197 @@ mod tests {
         );
         // 完全落在行外的样式被丢掉。
         assert_eq!(clip_to_line(&(14..20), &styles), Vec::new());
+    }
+
+    /// 可视区间要覆盖视口内的行，并夹在正文两端之内。
+    ///
+    /// 这里算错的下场是「滚到某处突然整屏空白」，所以两端各钉一条：滚到顶时从第 0 行开始、
+    /// 滚到底时最后一行必须在区间里。
+    #[test]
+    fn visible_rows_cover_the_viewport_and_stay_in_range() {
+        // 20 行、行高 20px、视口 100px：视口内 5 行，两端各留缓冲。
+        let rows = visible_rows(0.0, 100.0, 20.0, 20);
+        assert_eq!(rows.start, 0);
+        assert!(rows.end >= 6, "应覆盖视口内的 5 行：{rows:?}");
+
+        // 滚到底：内容高 416（20×20 加上下内边距）减视口 100，偏移就是 -316。
+        let rows = visible_rows(-316.0, 100.0, 20.0, 20);
+        assert_eq!(rows.end, 20);
+        assert!(rows.start <= 15, "滚到底时第 15 行应已渲染：{rows:?}");
+
+        // 偏移指向上一份更长的正文时应按当前内容高度夹住，而不是算出空区间。
+        let rows = visible_rows(-100_000.0, 100.0, 20.0, 20);
+        assert_eq!(rows.end, 20);
+        assert!(rows.start <= 15, "偏移越界时也要落在正文末尾：{rows:?}");
+
+        // 空正文没有行可渲染。
+        assert_eq!(visible_rows(0.0, 100.0, 20.0, 0), 0..0);
+    }
+
+    /// 虚拟化不能改变滚动条量程：没渲染的行由上下留白占住，量程仍与整份正文一致。
+    ///
+    /// 量程由框架在布局时量出（`max_offset` 加视口高），因此正文行数要多于视口能装下的行，否则
+    /// 量到的是视口高度而不是内容高度。这条也钉住留白公式：留白按 `window.line_height()` 算、
+    /// 真实行高由排版器定，两者差零点几像素的话 100 行就能差出好几像素。
+    #[gpui_kit::test]
+    fn spacers_keep_the_scroll_range_of_the_whole_body(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+        });
+        let text: String = (0..100)
+            .map(|index| format!("let value_{index} = compute_{index}();\n"))
+            .collect();
+        let lines = line_ranges(&text);
+        let theme = HighlightTheme::default_dark();
+        let styles = highlight(&text, "rust", theme.as_ref());
+        let marks = vec![None; lines.len()];
+
+        // 内容高度 = 滚动量程 + 视口高度，两者都由框架在布局时量好。
+        let probe = |cx: &mut TestAppContext, rows: Range<usize>| {
+            let scroll = ScrollHandle::new();
+            let (_, cx) = cx.add_window_view(|_, cx| ScrollProbe {
+                text: text.clone(),
+                lines: lines.clone(),
+                styles: styles.clone(),
+                marks: marks.clone(),
+                rows,
+                focus: cx.focus_handle(),
+                layer: true,
+                scroll: scroll.clone(),
+            });
+            cx.update(|window, cx| {
+                let _ = window.draw(cx);
+            });
+            let line_height = cx.update(|window, _| f32::from(window.line_height()));
+            (
+                f32::from(scroll.max_offset().y) + f32::from(scroll.bounds().size.height),
+                line_height,
+            )
+        };
+
+        let (full, line_height) = probe(cx, 0..lines.len());
+        let (windowed, _) = probe(cx, 0..8);
+        let expected = line_height * lines.len() as f32 + 2.0 * VERTICAL_PADDING;
+        assert!(
+            (full - expected).abs() <= 1.0,
+            "整份渲染的内容高度 {full} 与「行高 × 行数 + 上下内边距」{expected} 不一致"
+        );
+        assert!(
+            (full - windowed).abs() <= 1.0,
+            "只渲染 8 行时的滚动量程应仍与整份正文一致：全量 {full}，窗口 {windowed}"
+        );
+    }
+
+    /// 正文栏接上焦点之后，Ctrl+C 才把选中的行写进剪贴板。
+    ///
+    /// 复制不由正文自己做：按键由窗口根节点（`base::Root`）接住，读的是窗口级选择层里各参与者的
+    /// 副本，而按键得先有焦点路径才走得到根——一个焦点都没有时，按键的派发路径只有派发树的根，
+    /// 那里既没有 `Root` 键上下文也没有 `Copy` 的监听者，按下去毫无反应。这条测试因此走整条线：
+    /// 真的根节点 + 真的正文栏容器（[`pane_scroll`]）+ 「按下鼠标→拿焦点」，并且正文是被虚拟化
+    /// 过的（只渲染前 8 行）。
+    #[gpui_kit::test]
+    fn ctrl_c_copies_the_selection_of_a_focused_pane(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+        });
+        let text: String = (0..20)
+            .map(|index| format!("let value_{index} = compute_{index}();\n"))
+            .collect();
+        let lines = line_ranges(&text);
+        let theme = HighlightTheme::default_dark();
+        let styles = highlight(&text, "rust", theme.as_ref());
+
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            let probe = cx.new(|cx| ScrollProbe {
+                text: text.clone(),
+                lines: lines.clone(),
+                styles: styles.clone(),
+                marks: vec![None; lines.len()],
+                rows: 0..8,
+                focus: cx.focus_handle(),
+                layer: false,
+                scroll: ScrollHandle::new(),
+            });
+            gpui_kit::base::Root::new(probe, window, cx)
+        });
+
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        // 行在正文栏里的纵向位置：上方留白 + 行号。拖动从第一行跨到第二行。
+        let line_height = cx.update(|window, _| f32::from(window.line_height()));
+        let first = VERTICAL_PADDING + line_height * 0.5;
+        let second = VERTICAL_PADDING + line_height * 1.5;
+        cx.simulate_mouse_down(
+            point(px(60.), px(first)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_move(
+            point(px(200.), px(second)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            point(px(200.), px(second)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        cx.simulate_keystrokes("ctrl-c");
+        let copied = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .unwrap_or_default();
+        assert!(
+            copied.contains("value_0") && copied.contains("value_1"),
+            "Ctrl+C 该把选中的两行写进剪贴板，实际复制到 {copied:?}"
+        );
+    }
+
+    /// 量滚动量程与测复制用的最小正文栏：一个能拿焦点的滚动容器加一份被虚拟化的正文。
+    ///
+    /// `layer` 为假时不自带选择层：那一层由窗口根节点（`base::Root`）提供，叠两层会掩盖「根节点
+    /// 那一层是否真的接到选择」这件事。
+    struct ScrollProbe {
+        text: String,
+        lines: Vec<Range<usize>>,
+        styles: Vec<(Range<usize>, HighlightStyle)>,
+        marks: Vec<Option<LineChange>>,
+        rows: Range<usize>,
+        focus: FocusHandle,
+        layer: bool,
+        scroll: ScrollHandle,
+    }
+
+    impl Render for ScrollProbe {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .when(self.layer, |this| this.child(TextSelectionLayer))
+                .child(pane_scroll(
+                    &self.focus,
+                    &self.scroll,
+                    render_code(
+                        &self.text,
+                        &self.lines,
+                        // 这一探针只量滚动与复制，不带查找高亮。
+                        LineLayers {
+                            syntax: &self.styles,
+                            find: &[],
+                        },
+                        &self.marks,
+                        self.rows.clone(),
+                        window,
+                        cx,
+                    ),
+                ))
+        }
     }
 
     #[test]

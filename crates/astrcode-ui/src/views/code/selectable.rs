@@ -5,13 +5,13 @@
 //! 注册选择 run、画选中底色、再画带高亮的文本；手势、跨行拼接与复制仍由框架的选择层负责
 //! （窗口根节点里的 `TextSelectionLayer`，两个宿主都经 `gpui_kit::open_window` 装上）。
 
-use std::ops::Range;
+use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use gpui_kit::{
     App, BorderStyle, Bounds, Corners, Edges, Element, ElementId, GlobalElementId, HighlightStyle,
     Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, PaintQuad, Pixels,
     Point, SharedString, StyledText, TextLayout, TextStyle, Window,
-    base::{TextSelection, TextSelectionHandle, TextSelectionRegistration, TextSelectionRun},
+    base::{TextSelectionHandle, TextSelectionRegistration, TextSelectionRun},
     component::ActiveTheme as _,
     transparent_black,
 };
@@ -53,6 +53,18 @@ impl SelectableLine {
     }
 }
 
+/// 一行在选择层里的现场：框架的句柄，外加本行上一次画出去时的正文。
+///
+/// 后者只为看出「本行的正文换了，而它又在选中范围里」——那说明这一帧画出去的底色与复制用的
+/// 投影已经不是同一份正文，值得再要一帧（见 [`SelectableLine::paint`]）。它得是
+/// `Rc<RefCell<_>>` 而不是普通字段：`with_element_state` 交给 `prepaint`/`paint` 的只是保留
+/// 状态的一份克隆，普通字段改了留不到下一帧。
+#[derive(Clone)]
+pub(super) struct LineState {
+    handle: TextSelectionHandle,
+    painted_text: Rc<RefCell<SharedString>>,
+}
+
 impl IntoElement for SelectableLine {
     type Element = Self;
 
@@ -62,7 +74,7 @@ impl IntoElement for SelectableLine {
 }
 
 impl Element for SelectableLine {
-    type RequestLayoutState = TextSelectionHandle;
+    type RequestLayoutState = LineState;
     type PrepaintState = Hitbox;
 
     fn id(&self) -> Option<ElementId> {
@@ -80,14 +92,16 @@ impl Element for SelectableLine {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let handle = window.with_element_state(
+        let state = window.with_element_state(
             global_id.expect("可选择的行必须有稳定的元素 id"),
-            |retained: Option<TextSelectionHandle>, _| {
-                let handle =
-                    retained.unwrap_or_else(|| TextSelectionHandle::new(self.text.clone(), cx));
+            |retained: Option<LineState>, _| {
+                let state = retained.unwrap_or_else(|| LineState {
+                    handle: TextSelectionHandle::new(self.text.clone(), cx),
+                    painted_text: Rc::new(RefCell::new(self.text.clone())),
+                });
                 // 换了正文时行内容也变了，句柄记着的兜底文本跟着换；id 不变，选择状态照旧。
-                handle.set_fallback_copy_text(self.text.clone(), cx);
-                (handle.clone(), handle)
+                state.handle.set_fallback_copy_text(self.text.clone(), cx);
+                (state.clone(), state)
             },
         );
 
@@ -95,7 +109,7 @@ impl Element for SelectableLine {
             .with_default_highlights(&self.default_style, self.styles.clone());
         let (layout_id, ()) = styled.request_layout(global_id, inspector_id, window, cx);
         self.styled = Some(styled);
-        (layout_id, handle)
+        (layout_id, state)
     }
 
     fn prepaint(
@@ -103,7 +117,7 @@ impl Element for SelectableLine {
         global_id: Option<&GlobalElementId>,
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        handle: &mut Self::RequestLayoutState,
+        state: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
@@ -113,8 +127,8 @@ impl Element for SelectableLine {
         let registration = TextSelectionRegistration::new(hitbox.clone(), bounds)
             .with_document_order(self.order)
             .with_text_bounds(vec![bounds])
-            .with_rendered_element(handle, window, cx);
-        handle.register(registration, window, cx);
+            .with_rendered_element(&state.handle, window, cx);
+        state.handle.register(registration, window, cx);
         hitbox
     }
 
@@ -123,25 +137,31 @@ impl Element for SelectableLine {
         global_id: Option<&GlobalElementId>,
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        handle: &mut Self::RequestLayoutState,
+        state: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
         let styled = self.styled.as_mut().expect("request_layout 先于 paint");
         let layout = styled.layout().clone();
-        let selected_before = TextSelection::selected_text(window, cx);
-        let projection = handle.update_runs(
+        // 投影必须每帧更新，否则有选中时复制到的是旧文本。
+        let projection = state.handle.update_runs(
             &[
                 TextSelectionRun::new(self.text.clone(), layout.clone(), bounds)
                     .with_document_order(self.order),
             ],
             cx,
         );
-        // 选中变化要立刻反映到本帧的底色上：复制走的是同一份投影，晚一帧就会复制到旧文本。
-        if selected_before != TextSelection::selected_text(window, cx) {
+        // 判据只落在参与本次选择的行自己的正文上：能改变选中结果的，本来就是被选中那些行的
+        // 正文，而整窗的选中文本是全部参与者拼起来的——逐行去查它（`TextSelection` 的
+        // `selected_text` 要遍历全窗参与者再排序）就是参与者数的平方，长正文的帧时间正是耗在
+        // 那里。正文换过又还在选中范围里，说明画出去的底色与复制用的投影已经不是同一份正文，
+        // 再要一帧。
+        let painted = state.painted_text.borrow().clone();
+        if projection.is_active() && painted != self.text {
             window.refresh();
         }
+        *state.painted_text.borrow_mut() = self.text.clone();
         let color = cx.theme().selection;
         for range in projection.ranges().iter().flatten().cloned() {
             paint_selection(&layout, range, color, window);
@@ -212,7 +232,8 @@ fn selection_quads(
 mod tests {
     use gpui_kit::{
         Context, Modifiers, MouseButton, ParentElement as _, Render, Styled as _, TestAppContext,
-        base::TextSelectionLayer, div, point, px, size,
+        base::{TextSelection, TextSelectionLayer},
+        div, point, px, size,
     };
 
     use super::*;

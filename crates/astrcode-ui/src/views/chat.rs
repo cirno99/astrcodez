@@ -21,7 +21,7 @@ use astrcode_protocol::{
 use gpui_kit::{
     AnyElement, App, AppContext as _, AsyncApp, ClipboardItem, Context, Entity, EventEmitter,
     Focusable as _, FontWeight, Hsla, InteractiveElement as _, IntoElement, Keystroke,
-    ListAlignment, ListState, ParentElement as _, Render, SharedString,
+    ListAlignment, ListOffset, ListState, ParentElement as _, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, Task, WeakEntity, Window,
     component::{
         ActiveTheme as _, Disableable as _, Sizable as _, Size, ThemeStyled as _,
@@ -44,12 +44,13 @@ use crate::{
     ask_user,
     assistant_run::{
         ProcessEntry, ProcessSegment, Run, RunActions, RunSegment, TranscriptItem, activity_failed,
-        needs_session_fork_row, runtime_label, thinking_key, thinking_texts, transcript_items,
-        visible_text,
+        needs_session_fork_row, runtime_label, thinking_key, thinking_texts, transcript_item_text,
+        transcript_items, visible_text,
     },
     composer_config,
     composer_queue::{self, DeliveryMode, PendingMessage, PendingQueue},
     conversation::{ConversationState, DeltaBuffer, delta::block_id},
+    find::{self, Find},
     icons::IconName,
     metrics,
     pending_ask_user::{self, PendingQuestion, PendingQuestions},
@@ -246,6 +247,10 @@ pub struct ChatView {
     model_saving: bool,
     /// 模型清单取数任务；重取时换掉上一个。
     models_task: Option<Task<()>>,
+    /// 会话内查找：查询框、大小写口径与当前那一项。
+    search: Find,
+    /// 命中的转录项下标（升序）；一项里命中多处也只算一项——跳转以「一条消息」为单位。
+    search_matches: Vec<usize>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -260,6 +265,8 @@ impl ChatView {
         });
         // 模型面板的搜索框：单行，回车不提交。
         let model_query = cx.new(|cx| InputState::new(window, cx).placeholder("搜索模型…"));
+        // 会话内查找的查询框；它常驻页头，不像代码页那条要 Ctrl+F 才出现。
+        let search_query = cx.new(|cx| InputState::new(window, cx).placeholder("在会话里查找…"));
         let view = cx.weak_entity();
         let subscriptions = vec![
             cx.subscribe_in(&input, window, {
@@ -281,6 +288,16 @@ impl ChatView {
                     cx.notify();
                 }
             }),
+            // 会话内查找：每敲一个字重算一次命中。文本都在内存里，不必防抖。
+            cx.subscribe_in(
+                &search_query,
+                window,
+                |this, _, event: &InputEvent, _, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.refresh_search(cx);
+                    }
+                },
+            ),
             // 面板开着时把方向键、Tab 与回车从输入区手里接过来：拦截发生在动作派发之前，
             // 停掉派发就等于输入区收不到这次按键——上下键不会移光标，Tab 不会跳焦点。
             cx.intercept_keystrokes(move |event, window, cx| {
@@ -343,6 +360,8 @@ impl ChatView {
             sidebar_open: true,
             model_saving: false,
             models_task: None,
+            search: Find::new(search_query),
+            search_matches: Vec::new(),
             _subscriptions: subscriptions,
         };
         // 没打开任何会话时也要能看见别的会话在等回答，所以轮询从建视图那一刻就起。
@@ -1465,6 +1484,61 @@ impl ChatView {
         cx.notify();
     }
 
+    /// 重算会话里命中的转录项，并把列表滚到第一处。
+    ///
+    /// 会话内容是已经在手的块，直接扫一遍就行，不必像代码搜索那样走服务端。命中的单位是
+    /// 「项」而不是「处」：一项里命中五次也只算一项——跳转要落到的是一条消息。
+    fn refresh_search(&mut self, cx: &mut Context<Self>) {
+        let needle = self.search.needle(cx);
+        let case_sensitive = self.search.case_sensitive();
+        // 先把各一项的文本取出来：下面要改自身的字段，借不了 `self.state`。
+        let texts: Vec<String> = transcript_items(self.state.blocks())
+            .iter()
+            .map(transcript_item_text)
+            .collect();
+        self.search_matches.clear();
+        if !needle.is_empty() {
+            for (index, text) in texts.iter().enumerate() {
+                if !find::literal_matches(text, &needle, case_sensitive).is_empty() {
+                    self.search_matches.push(index);
+                }
+            }
+        }
+        self.search.rewind();
+        self.search.set_count(self.search_matches.len());
+        self.scroll_to_search_match();
+        cx.notify();
+    }
+
+    /// 把转录滚到当前命中那一项。
+    fn scroll_to_search_match(&self) {
+        let Some(index) = self.search_matches.get(self.search.current()) else {
+            return;
+        };
+        self.transcript.scroll_to(ListOffset {
+            item_ix: *index,
+            offset_in_item: px(0.),
+        });
+    }
+
+    /// 跳到下一处/上一处命中。
+    fn step_search(&mut self, forward: bool, cx: &mut Context<Self>) {
+        self.search.advance(forward);
+        self.scroll_to_search_match();
+        cx.notify();
+    }
+
+    fn toggle_search_case(&mut self, cx: &mut Context<Self>) {
+        self.search.toggle_case();
+        self.refresh_search(cx);
+    }
+
+    /// 清空查询串（查找栏右端那枚按钮）。
+    fn clear_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search.clear(window, cx);
+        self.refresh_search(cx);
+    }
+
     fn render_transcript(&self, cx: &mut Context<Self>) -> AnyElement {
         if self.session_id.is_none() {
             return self.render_placeholder("从左侧选择一个会话", cx);
@@ -1503,12 +1577,13 @@ impl ChatView {
             Some(TranscriptItem::Run(run)) => self.render_run(run, cx),
             None => self.render_fork_row(cx),
         };
-        v_flex()
-            .w_full()
-            .px_6()
-            .pb_4()
-            .child(item)
-            .into_any_element()
+        let mut row = v_flex().w_full().px_6().pb_4();
+        // 查找的当前命中：整项铺一层强调底色。正文里的具体那一段没有单独标记——正文与工具
+        // 结果各由自己的视图渲染，不给外部高亮留位置。
+        if self.search_matches.get(self.search.current()) == Some(&ix) {
+            row = row.bg(cx.theme().accent).rounded(cx.theme().radius);
+        }
+        row.child(item).into_any_element()
     }
 
     /// 跨会话待回答问卷的横幅：当前会话丢了工具块的给恢复卡片，其余会话给一行可点的入口。
@@ -2569,6 +2644,12 @@ impl ChatView {
                     .child(phase),
             )
             .child(div().flex_1())
+            .child(find::render_find_bar(
+                &self.search,
+                search_actions(),
+                "清空查找",
+                cx,
+            ))
             .into_any_element()
     }
 
@@ -3363,6 +3444,16 @@ async fn follow(
 }
 
 /// 状态栏项里哪几个 id 是分支名；这是插件与前端之间的约定。
+/// 会话查找栏的几个动作，指到 [`ChatView`] 上的方法。
+fn search_actions() -> find::FindActions<ChatView> {
+    find::FindActions {
+        toggle_case: |this, _, cx| this.toggle_search_case(cx),
+        prev: |this, _, cx| this.step_search(false, cx),
+        next: |this, _, cx| this.step_search(true, cx),
+        close: |this, window, cx| this.clear_search(window, cx),
+    }
+}
+
 fn is_branch_item(id: &str) -> bool {
     matches!(id, "git-branch" | "branch" | "gitBranch")
 }
@@ -3457,18 +3548,32 @@ fn format_arguments(arguments_json: Option<&Value>, arguments: &str) -> String {
     }
 }
 
-/// diff 行的（文字色, 底色）。主题没有单独的 soft 角色，底色由语义色降透明度得到。
+/// 增删行底色的混色比例：语义色与主题底色预混出实底。
 ///
-/// 与 [`crate::views::code::diff`] 共用一份配色：两处画的是同一种东西。
+/// 取 0.18 而不是更低的透明度：底色要在深色主题上「一眼可辨」才算把增删说清楚了。
+const TINT_ALPHA: f32 = 0.18;
+
+/// diff 行的（文字色, 底色）。
+///
+/// 底色是语义色与主题底色预混出来的**不透明**色，而不是降透明度的语义色：半透明底色要求
+/// 底下那一层真的参与合成，一旦画到别的东西、或那条合成路径没生效，整片底色就看不出来——
+/// 而增删行恰恰必须一眼可辨。
+///
+/// 与 [`crate::views::code::diff`] 共用一份配色：两处画的是同一种东西（那里是双栏的格子底色）。
 pub(crate) fn diff_colors(kind: DiffLineKind, cx: &App) -> (Hsla, Hsla) {
     let theme = cx.theme();
     match kind {
-        DiffLineKind::Addition => (theme.success, theme.success.alpha(0.12)),
-        DiffLineKind::Deletion => (theme.danger, theme.danger.alpha(0.12)),
+        DiffLineKind::Addition => (theme.success, tinted(theme.background, theme.success)),
+        DiffLineKind::Deletion => (theme.danger, tinted(theme.background, theme.danger)),
         DiffLineKind::FileHeader => (theme.muted_foreground, theme.transparent),
         DiffLineKind::Hunk => (theme.foreground, theme.muted),
         DiffLineKind::Context => (theme.foreground, theme.transparent),
     }
+}
+
+/// 把语义色按 [`TINT_ALPHA`] 叠到主题底色上，得到不透明的行底色。
+fn tinted(background: Hsla, color: Hsla) -> Hsla {
+    background.blend(color.alpha(TINT_ALPHA))
 }
 
 
