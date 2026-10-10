@@ -169,15 +169,17 @@ pub enum TurnError {
     /// 正文或思考退化成大量重复片段，守卫主动中断生成；文案前缀由
     /// [`crate::repetition_guard::DEGENERATE_REPETITION_MARKER`] 固定，二者由单测绑定。
     #[error(
-        "{} ({stream}): {window_fragments} fragments contained only {distinct_fragments} distinct \
-         fragments",
+        "{} ({stream}, {rule}): {repeated_chars} of {accounted_chars} accounted characters are \
+         repeated",
         crate::repetition_guard::DEGENERATE_REPETITION_MARKER
     )]
     DegenerateRepetition {
         stream: crate::repetition_guard::RepetitionStream,
-        distinct_fragments: usize,
-        window_fragments: usize,
+        rule: crate::repetition_guard::RepetitionRule,
+        repeated_chars: usize,
+        accounted_chars: usize,
     },
+
     #[error("turn aborted")]
     Aborted,
     #[error("input blocked by extension: {reason}")]

@@ -158,22 +158,25 @@ impl<'a> StreamConsumer<'a> {
         });
         let Some(DegenerateRepetition {
             stream,
-            distinct_fragments,
-            window_fragments,
+            rule,
+            repeated_chars,
+            accounted_chars,
         }) = repetition
         else {
             return Ok(());
         };
         tracing::warn!(
             stream = %stream,
-            distinct_fragments,
-            window_fragments,
+            rule = %rule,
+            repeated_chars,
+            accounted_chars,
             "assistant text degenerated into repeated fragments; aborting the stream"
         );
         Err(TurnError::DegenerateRepetition {
             stream,
-            distinct_fragments,
-            window_fragments,
+            rule,
+            repeated_chars,
+            accounted_chars,
         })
     }
 
@@ -207,22 +210,25 @@ impl<'a> StreamConsumer<'a> {
         });
         let Some(DegenerateRepetition {
             stream,
-            distinct_fragments,
-            window_fragments,
+            rule,
+            repeated_chars,
+            accounted_chars,
         }) = repetition
         else {
             return Ok(());
         };
         tracing::warn!(
             stream = %stream,
-            distinct_fragments,
-            window_fragments,
+            rule = %rule,
+            repeated_chars,
+            accounted_chars,
             "assistant thinking degenerated into repeated fragments; aborting the stream"
         );
         Err(TurnError::DegenerateRepetition {
             stream,
-            distinct_fragments,
-            window_fragments,
+            rule,
+            repeated_chars,
+            accounted_chars,
         })
     }
 

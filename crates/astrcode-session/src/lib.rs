@@ -42,7 +42,7 @@ pub(crate) mod turn_stages;
 pub use payload::{
     agent_session_completed_payload, agent_session_failed_payload, system_prompt_configured_payload,
 };
-pub use repetition_guard::RepetitionStream;
+pub use repetition_guard::{RepetitionRule, RepetitionStream};
 pub use session::{Session, SessionCreateParams, emit_lifecycle_for_read_model};
 pub use session_error::SessionError;
 pub use session_event_sink::{
