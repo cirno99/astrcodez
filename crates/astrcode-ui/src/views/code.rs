@@ -258,7 +258,7 @@ impl CodeView {
             ));
         }
         header = header
-            .child(div().text_sm().child("代码"))
+            .child(div().text_sm().child("文件"))
             .child(
                 div()
                     .min_w_0()

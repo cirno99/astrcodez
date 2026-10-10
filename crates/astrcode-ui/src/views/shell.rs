@@ -138,6 +138,7 @@ impl Shell {
                 // 子 Agent 卡的「查看子会话」：切到子会话这一侧与点列表项同路，
                 // 子会话不在当前列表里时拿不到标题，顶栏留空。
                 ChatEvent::OpenSession(session_id) => this.open_session(session_id.clone(), cx),
+                ChatEvent::OpenFiles => this.set_main_view(MainView::Code, cx),
                 ChatEvent::ToggleSidebar => this.toggle_sidebar(cx),
             }),
             // 代码页自己只有一个页头按钮（侧边栏收起时的展开入口），与对话页同一路。

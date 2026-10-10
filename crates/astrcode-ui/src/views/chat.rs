@@ -126,6 +126,8 @@ pub enum ChatEvent {
     SessionForked(String),
     /// 要切到另一个会话（目前只有子 Agent 卡会发）；切过去仍由外壳做。
     OpenSession(String),
+    /// 用户要浏览当前会话项目里的文件；浏览根目录在外壳手里，切页也由它做。
+    OpenFiles,
     /// 用户要求展开侧边栏（收起时页头上的那枚按钮）。
     ToggleSidebar,
 }
@@ -2765,6 +2767,15 @@ impl ChatView {
             .as_deref()
             .and_then(session_list::project_name_tail)
         {
+            // 文件浏览的根目录就是这个会话的项目目录，入口因此贴着项目名放。
+            row = row.child(
+                Button::new("chat-files")
+                    .ghost()
+                    .small()
+                    .label("文件")
+                    .tooltip("浏览这个项目的文件")
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(ChatEvent::OpenFiles))),
+            );
             row = row.child(
                 h_flex()
                     .items_center()
