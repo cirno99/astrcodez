@@ -10,6 +10,7 @@ use crate::config_manager::ConfigUpdateError;
 pub(in crate::http) mod config;
 pub(in crate::http) mod event_consumers;
 pub(in crate::http) mod extensions;
+pub(in crate::http) mod files;
 pub(in crate::http) mod lifecycle;
 pub(in crate::http) mod models;
 pub(in crate::http) mod preferences;

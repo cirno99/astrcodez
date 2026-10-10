@@ -2,6 +2,7 @@
 
 pub(crate) mod ask_user_card;
 pub mod chat;
+pub mod code;
 pub(crate) mod create_card;
 pub mod kanban;
 pub(crate) mod new_project;
@@ -29,6 +30,7 @@ use crate::icons::IconName;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MainView {
     Chat,
+    Code,
     Kanban,
     Settings,
 }

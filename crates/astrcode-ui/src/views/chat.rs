@@ -3447,7 +3447,9 @@ fn format_arguments(arguments_json: Option<&Value>, arguments: &str) -> String {
 }
 
 /// diff 行的（文字色, 底色）。主题没有单独的 soft 角色，底色由语义色降透明度得到。
-fn diff_colors(kind: DiffLineKind, cx: &App) -> (Hsla, Hsla) {
+///
+/// 与 [`crate::views::code::diff`] 共用一份配色：两处画的是同一种东西。
+pub(crate) fn diff_colors(kind: DiffLineKind, cx: &App) -> (Hsla, Hsla) {
     let theme = cx.theme();
     match kind {
         DiffLineKind::Addition => (theme.success, theme.success.alpha(0.12)),

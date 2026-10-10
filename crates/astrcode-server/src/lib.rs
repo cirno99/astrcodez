@@ -17,6 +17,7 @@ pub mod test_support;
 mod child_session;
 mod config_manager;
 mod delivery_gates;
+mod file_browser;
 mod handler;
 mod presentation;
 mod protocol_mapping;

@@ -19,7 +19,9 @@ use super::{
     HttpState,
     auth::collect_allowed_origins,
     conversation_timeline::EventLogConversationTimeline,
-    routes::{config, event_consumers, extensions, lifecycle, models, preferences, sessions},
+    routes::{
+        config, event_consumers, extensions, files, lifecycle, models, preferences, sessions,
+    },
     stream, webui_assets,
 };
 use crate::{bootstrap::ServerApp, server_event_bus::ServerEventBus};
@@ -155,6 +157,10 @@ fn router_parts(server_app: Arc<ServerApp>) -> RouterParts {
             "/api/config/model-options",
             post(config::update_model_options),
         )
+        .route("/api/files/tree", get(files::file_tree))
+        .route("/api/files/content", get(files::file_content))
+        .route("/api/files/diff", get(files::file_diff))
+        .route("/api/files/status", get(files::file_status))
         .route("/api/extensions", get(extensions::list_extensions))
         .route(
             "/api/extensions/reload",

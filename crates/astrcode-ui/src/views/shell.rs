@@ -17,6 +17,7 @@ use gpui_kit::{
 use super::{
     MainView,
     chat::{ChatEvent, ChatView},
+    code::{CodeView, CodeViewEvent},
     display_title,
     kanban::{KanbanEvent, KanbanView},
     new_project::{NewProjectEvent, NewProjectModal},
@@ -48,6 +49,7 @@ pub struct Shell {
     working_dir: String,
     sidebar: Entity<Sidebar>,
     chat: Entity<ChatView>,
+    code: Entity<CodeView>,
     kanban: Entity<KanbanView>,
     settings: Entity<SettingsView>,
     /// 主区域当前显示的那一页。
@@ -83,10 +85,12 @@ impl Shell {
     pub fn new(api: Api, working_dir: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let sidebar = cx.new(Sidebar::new);
         let chat = cx.new(|cx| ChatView::new(api.clone(), window, cx));
+        let code = cx.new(|cx| CodeView::new(api.clone(), cx));
         let kanban = cx.new(|_| KanbanView::new(api.clone()));
         let settings = cx.new(|cx| SettingsView::new(api.clone(), window, cx));
-        // 侧边栏一开始是显示的，三个主区域的页头因此都不挂展开入口。
+        // 侧边栏一开始是显示的，四个主区域的页头因此都不挂展开入口。
         chat.update(cx, |chat, cx| chat.set_sidebar_open(true, cx));
+        code.update(cx, |code, cx| code.set_sidebar_open(true, cx));
         kanban.update(cx, |kanban, cx| kanban.set_sidebar_open(true, cx));
         settings.update(cx, |settings, cx| settings.set_sidebar_open(true, cx));
         let subscriptions = vec![
@@ -136,6 +140,10 @@ impl Shell {
                 ChatEvent::OpenSession(session_id) => this.open_session(session_id.clone(), cx),
                 ChatEvent::ToggleSidebar => this.toggle_sidebar(cx),
             }),
+            // 代码页自己只有一个页头按钮（侧边栏收起时的展开入口），与对话页同一路。
+            cx.subscribe(&code, |this, _, event: &CodeViewEvent, cx| match event {
+                CodeViewEvent::ToggleSidebar => this.toggle_sidebar(cx),
+            }),
             // 卡片上的点击落在看板页里，跳对话意味着从看板回到对话页。
             cx.subscribe(&kanban, |this, _, event: &KanbanEvent, cx| match event {
                 KanbanEvent::OpenSession(session_id) => {
@@ -167,6 +175,7 @@ impl Shell {
             working_dir,
             sidebar,
             chat,
+            code,
             kanban,
             settings,
             main_view: MainView::Chat,
@@ -366,6 +375,8 @@ impl Shell {
     fn open_session(&mut self, session_id: String, cx: &mut Context<Self>) {
         let title = self.sidebar.read(cx).session_title(&session_id);
         let working_dir = self.sidebar.read(cx).working_dir_of(&session_id);
+        // 代码页的浏览根目录跟着当前会话走；没有工作目录时留空根，页面自己给提示。
+        let root = working_dir.clone().unwrap_or_default();
         self.sidebar
             .update(cx, |sidebar, cx| sidebar.set_active(&session_id, cx));
         self.chat.update(cx, |chat, cx| {
@@ -376,6 +387,7 @@ impl Shell {
                 chat.set_title(title, cx);
             }
         });
+        self.code.update(cx, |code, cx| code.set_root(root, cx));
         // 看板的新建卡片弹窗默认目录跟着当前会话走。
         self.sync_kanban_paths(cx);
     }
@@ -388,13 +400,14 @@ impl Shell {
         let working_dir = self.working_dir.clone();
         let sidebar = self.sidebar.clone();
         let chat = self.chat.clone();
+        let code = self.code.clone();
 
         self.session_task = Some(cx.spawn(async move |_this, cx| {
             match fetch_sessions(&api, create.as_deref(), &working_dir).await {
                 Ok((sessions, created)) => {
                     let target =
                         created.or_else(|| sessions.first().map(|item| item.session_id.clone()));
-                    apply_session_list(&sidebar, &chat, sessions, target, cx);
+                    apply_session_list(&sidebar, &chat, &code, sessions, target, cx);
                 },
                 Err(error) => {
                     sidebar.update(cx, |sidebar, cx| sidebar.set_error(error.to_string(), cx));
@@ -483,6 +496,7 @@ impl Shell {
         let api = self.api.clone();
         let sidebar = self.sidebar.clone();
         let chat = self.chat.clone();
+        let code = self.code.clone();
         let Some(dialog) = &self.new_project else {
             return;
         };
@@ -505,7 +519,7 @@ impl Shell {
                     return;
                 },
             };
-            apply_session_list(&sidebar, &chat, sessions, Some(created), cx);
+            apply_session_list(&sidebar, &chat, &code, sessions, Some(created), cx);
             this.update(cx, |this, cx| {
                 this.remember_project_path(&working_dir, cx);
                 this.close_new_project(cx);
@@ -547,6 +561,8 @@ impl Shell {
         let open = self.sidebar_open;
         self.chat
             .update(cx, |chat, cx| chat.set_sidebar_open(open, cx));
+        self.code
+            .update(cx, |code, cx| code.set_sidebar_open(open, cx));
         self.kanban
             .update(cx, |kanban, cx| kanban.set_sidebar_open(open, cx));
         self.settings
@@ -559,10 +575,11 @@ impl Shell {
         let api = self.api.clone();
         let sidebar = self.sidebar.clone();
         let chat = self.chat.clone();
+        let code = self.code.clone();
 
         self.session_task = Some(cx.spawn(
             async move |_this, cx| match api.list_sessions().await {
-                Ok(sessions) => apply_session_list(&sidebar, &chat, sessions, target, cx),
+                Ok(sessions) => apply_session_list(&sidebar, &chat, &code, sessions, target, cx),
                 Err(error) => {
                     sidebar.update(cx, |sidebar, cx| sidebar.set_error(error.to_string(), cx));
                 },
@@ -595,6 +612,7 @@ impl Shell {
         let api = self.api.clone();
         let sidebar = self.sidebar.clone();
         let chat = self.chat.clone();
+        let code = self.code.clone();
         let active = self.sidebar.read(cx).active_id().map(str::to_owned);
 
         self.session_task = Some(cx.spawn(async move |_this, cx| {
@@ -606,7 +624,7 @@ impl Shell {
                 Ok(sessions) => {
                     let target =
                         session_list::pick_active_after_delete(&sessions, active.as_deref(), None);
-                    apply_session_list(&sidebar, &chat, sessions, target, cx);
+                    apply_session_list(&sidebar, &chat, &code, sessions, target, cx);
                 },
                 Err(error) => {
                     sidebar.update(cx, |sidebar, cx| sidebar.set_error(error.to_string(), cx));
@@ -622,6 +640,7 @@ impl Shell {
         let api = self.api.clone();
         let sidebar = self.sidebar.clone();
         let chat = self.chat.clone();
+        let code = self.code.clone();
         let active = self.sidebar.read(cx).active_id().map(str::to_owned);
 
         self.session_task = Some(cx.spawn(async move |_this, cx| {
@@ -636,7 +655,7 @@ impl Shell {
                         active.as_deref(),
                         Some(&working_dir),
                     );
-                    apply_session_list(&sidebar, &chat, sessions, target, cx);
+                    apply_session_list(&sidebar, &chat, &code, sessions, target, cx);
                 },
                 Err(error) => {
                     sidebar.update(cx, |sidebar, cx| sidebar.set_error(error.to_string(), cx));
@@ -653,6 +672,7 @@ impl Shell {
         let api = self.api.clone();
         let sidebar = self.sidebar.clone();
         let chat = self.chat.clone();
+        let code = self.code.clone();
         let active = self.sidebar.read(cx).active_id().map(str::to_owned);
 
         self.session_task = Some(cx.spawn(async move |_this, cx| {
@@ -667,7 +687,7 @@ impl Shell {
                 Ok(sessions) => {
                     let target =
                         session_list::pick_active_after_delete(&sessions, active.as_deref(), None);
-                    apply_session_list(&sidebar, &chat, sessions, target, cx);
+                    apply_session_list(&sidebar, &chat, &code, sessions, target, cx);
                     // 报错放在列表落地之后：`set_sessions` 会把上一次的错误清掉。
                     if let Some(message) = failure {
                         sidebar.update(cx, |sidebar, cx| sidebar.set_error(message, cx));
@@ -685,6 +705,7 @@ impl Render for Shell {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let main = match self.main_view {
             MainView::Chat => self.chat.clone().into_any_element(),
+            MainView::Code => self.code.clone().into_any_element(),
             MainView::Kanban => self.kanban.clone().into_any_element(),
             MainView::Settings => self.settings.clone().into_any_element(),
         };
@@ -742,12 +763,16 @@ impl Render for Shell {
     }
 }
 
-/// 把会话列表推给侧边栏，并把 `target` 选上。
+/// 把会话列表推给侧边栏与代码页，并把 `target` 选上。
+///
+/// 代码页的浏览根目录就是选中会话的工作目录，所以它和会话列表在同一处更新：这里拿到的
+/// `working_dir` 与推给会话面板的是同一个值。
 ///
 /// `target` 为空表示列表里已经没有可选的会话（会话或项目被删光），此时把会话面板清空。
 fn apply_session_list(
     sidebar: &Entity<Sidebar>,
     chat: &Entity<ChatView>,
+    code: &Entity<CodeView>,
     sessions: Vec<SessionListItemDto>,
     target: Option<String>,
     cx: &mut AsyncApp,
@@ -767,6 +792,9 @@ fn apply_session_list(
         .map(|item| item.working_dir.clone());
     sidebar.update(cx, |sidebar, cx| sidebar.set_sessions(sessions, cx));
     chat.update(cx, |chat, cx| chat.set_session_titles(titles, cx));
+    // 列表换了就是选中项可能换了：代码页的根跟着走，没有选中项时退化成空根。
+    let root = working_dir.clone().unwrap_or_default();
+    code.update(cx, |code, cx| code.set_root(root, cx));
     match target {
         Some(session_id) => {
             sidebar.update(cx, |sidebar, cx| sidebar.set_active(&session_id, cx));

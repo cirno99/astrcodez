@@ -852,6 +852,7 @@ impl Render for Sidebar {
             .border_b_1()
             .border_color(cx.theme().sidebar_border)
             .child(self.render_new_conversation_item(cx));
+        nav = nav.child(self.render_nav_item(MainView::Code, IconName::Terminal, "代码", cx));
         if self.kanban_available {
             nav = nav.child(self.render_nav_item(MainView::Kanban, IconName::Board, "看板", cx));
         }

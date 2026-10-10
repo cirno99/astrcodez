@@ -16,7 +16,8 @@ use astrcode_protocol::{
         ConfigViewResponseDto, ConversationSnapshotResponseDto, ConversationStreamEnvelopeDto,
         CreateSessionRequest, CreateSessionResponseDto, CurrentModelResponseDto,
         DeleteProjectResponseDto, ExtensionListResponseDto, ExtensionReloadResponseDto,
-        ForkSessionRequest, ModelListResponseDto, ModelTestResponseDto, PromptRequest,
+        FileContentResponseDto, FileDiffResponseDto, FileTreeResponseDto, ForkSessionRequest,
+        GitStatusResponseDto, ModelListResponseDto, ModelTestResponseDto, PromptRequest,
         PromptSubmitResponse, ProviderCatalogResponseDto, RemoveProviderPresetRequest,
         RemoveProviderPresetResponseDto, SessionListItemDto, SessionListResponseDto,
         SetExtensionEnabledRequest, SetExtensionEnabledResponseDto, SlashCommandListResponseDto,
@@ -381,6 +382,30 @@ impl Api {
         .await
     }
 
+    /// 列举浏览根目录下的一层条目；`path` 是相对根目录的路径，空串指根目录。
+    pub async fn file_tree(&self, root: &str, path: &str) -> Result<FileTreeResponseDto, ApiError> {
+        self.get_json(&files_url("/tree", root, path)).await
+    }
+
+    /// 读取一个文件的正文。
+    pub async fn file_content(
+        &self,
+        root: &str,
+        path: &str,
+    ) -> Result<FileContentResponseDto, ApiError> {
+        self.get_json(&files_url("/content", root, path)).await
+    }
+
+    /// 取文件相对 git HEAD 的未提交改动。
+    pub async fn file_diff(&self, root: &str, path: &str) -> Result<FileDiffResponseDto, ApiError> {
+        self.get_json(&files_url("/diff", root, path)).await
+    }
+
+    /// 取整个工作区相对 git HEAD 的未提交改动清单。
+    pub async fn worktree_status(&self, root: &str) -> Result<GitStatusResponseDto, ApiError> {
+        self.get_json(&files_root_url("/status", root)).await
+    }
+
     /// 订阅会话事件流。`cursor` 为空表示从当前快照之后开始。
     pub async fn subscribe(
         &self,
@@ -532,6 +557,24 @@ const PENDING_ASK_USER_PATH: &str = "/api/extensions/astrcode-ask-user/questions
 /// 看板扩展的路由前缀：路由由 `astrcode-kanban` 自己注册。
 fn kanban_url(suffix: &str) -> String {
     format!("/api/extensions/{}{suffix}", crate::kanban::EXTENSION_ID)
+}
+
+/// 代码浏览接口的 URL：根目录与相对路径都作为查询参数跨边界，字符集不受我们控制
+/// （路径里可以有空格、`#`、`&`），因此两个都过一遍百分号编码。
+fn files_url(endpoint: &str, root: &str, path: &str) -> String {
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("root", root)
+        .append_pair("path", path)
+        .finish();
+    format!("/api/files{endpoint}?{query}")
+}
+
+/// 只要根目录的代码接口 URL：工作区清单与单个路径无关。
+fn files_root_url(endpoint: &str, root: &str) -> String {
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("root", root)
+        .finish();
+    format!("/api/files{endpoint}?{query}")
 }
 
 /// 只关心成败的请求：非 2xx 带上响应体转成 [`ApiError::Status`]。

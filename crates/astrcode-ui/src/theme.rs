@@ -20,7 +20,10 @@ use std::rc::Rc;
 
 use gpui_kit::{
     App, Hsla,
-    component::theme::{Theme, ThemeConfig, ThemeConfigColors, ThemeMode},
+    component::{
+        highlighter::HighlightThemeStyle,
+        theme::{Theme, ThemeConfig, ThemeConfigColors, ThemeMode},
+    },
     rgb,
 };
 
@@ -41,6 +44,69 @@ pub(crate) fn brand_avatar_background() -> Hsla {
 pub(crate) fn brand_avatar_foreground() -> Hsla {
     rgb(0xffffff).into()
 }
+
+/// 代码语法高亮的调色板：Catppuccin Macchiato。
+///
+/// 取 Macchiato 官方调色板（keyword 用 mauve、function 用 blue、string 用 green、
+/// comment 用 overlay0……），与产品的冷调深色底色同族，比框架自带的深色主题更贴当前界面。
+///
+/// 写成 JSON 而不是 Rust 结构体：`ThemeStyle` 的字段是私有的，`Deserialize` 是唯一的构造
+/// 入口；格式与 gpui-component 自带主题文件里的 `highlight.syntax` 段一致（Zed 主题格式）。
+/// 只写语法色，`editor.*` 与状态色留给框架默认值：读写正文的那两块取的是产品语义色，
+/// 不读高亮主题里的对应字段。
+pub(crate) fn code_highlight_style() -> HighlightThemeStyle {
+    serde_json::from_str(CATPPUCCIN_MACCHIATO_SYNTAX)
+        .expect("内置的 Macchiato 高亮调色板必须能解析")
+}
+
+/// Macchiato 调色板里的语法段，取值见 <https://catppuccin.com/palette>。
+///
+/// 分隔符用 `r##`：正文里的十六进制色值自带 `"#`，`r#"` 会在第一个色值处提前收起。
+const CATPPUCCIN_MACCHIATO_SYNTAX: &str = r##"{
+    "syntax": {
+        "attribute": { "color": "#eed49f" },
+        "boolean": { "color": "#f5a97f" },
+        "comment": { "color": "#6e738d", "font_style": "italic" },
+        "comment.doc": { "color": "#6e738d", "font_style": "italic" },
+        "constant": { "color": "#f5a97f" },
+        "constructor": { "color": "#eed49f" },
+        "embedded": { "color": "#cad3f5" },
+        "emphasis": { "font_style": "italic" },
+        "emphasis.strong": { "font_weight": 700 },
+        "enum": { "color": "#eed49f" },
+        "function": { "color": "#8aadf4" },
+        "hint": { "color": "#8aadf4" },
+        "keyword": { "color": "#c6a0f6" },
+        "label": { "color": "#8aadf4" },
+        "link_text": { "color": "#8aadf4" },
+        "link_uri": { "color": "#8aadf4" },
+        "number": { "color": "#f5a97f" },
+        "operator": { "color": "#91d7e3" },
+        "predictive": { "color": "#939ab7" },
+        "preproc": { "color": "#f5a97f" },
+        "primary": { "color": "#cad3f5" },
+        "property": { "color": "#8aadf4" },
+        "punctuation": { "color": "#939ab7" },
+        "punctuation.bracket": { "color": "#6e738d" },
+        "punctuation.delimiter": { "color": "#6e738d" },
+        "punctuation.list_marker": { "color": "#c6a0f6" },
+        "punctuation.special": { "color": "#f5a97f" },
+        "string": { "color": "#a6da95" },
+        "string.escape": { "color": "#f5a97f" },
+        "string.regex": { "color": "#91d7e3" },
+        "string.special": { "color": "#91d7e3" },
+        "string.special.symbol": { "color": "#f5a97f" },
+        "tag": { "color": "#8aadf4" },
+        "tag.doctype": { "color": "#c6a0f6" },
+        "text.code.span": { "color": "#f5a97f" },
+        "text.literal": { "color": "#a6da95" },
+        "title": { "color": "#8aadf4" },
+        "type": { "color": "#eed49f" },
+        "variable": { "color": "#cad3f5" },
+        "variable.special": { "color": "#ed8796" },
+        "variant": { "color": "#eed49f" }
+    }
+}"##;
 
 /// 产品主题配置；只写产品说了算的角色，其余交给本模式的内置主题。
 ///
@@ -114,6 +180,8 @@ fn product_config() -> ThemeConfig {
         radius: Some(8),
         radius_lg: Some(12),
         colors,
+        // 代码块的语法高亮跟着产品走，见 [`code_highlight_style`]。
+        highlight: Some(code_highlight_style()),
         ..Default::default()
     }
 }
@@ -149,6 +217,30 @@ mod tests {
         assert_eq!(theme.sidebar, Hsla::from(rgb(0x202524)));
         assert_eq!(theme.radius, px(8.));
         assert_eq!(theme.radius_lg, px(12.));
+    }
+
+    /// 高亮调色板要真的落在装载后的主题上：`HighlightTheme` 由 `ThemeConfig.highlight` 装出，
+    /// 漏了这一步，代码块会静默退回框架自带的深色主题（与产品深色界面对不上，正是要修的问题）。
+    #[test]
+    fn code_highlight_follows_the_macchiato_palette() {
+        let syntax = &installed().highlight_theme.style.syntax;
+
+        for (token, expected) in [
+            ("keyword", 0xc6a0f6),
+            ("function", 0x8aadf4),
+            ("string", 0xa6da95),
+            ("comment", 0x6e738d),
+            ("type", 0xeed49f),
+        ] {
+            let style = syntax
+                .style(token)
+                .unwrap_or_else(|| panic!("{token} 没有配色"));
+            assert_eq!(
+                style.color,
+                Some(Hsla::from(rgb(expected))),
+                "{token} 取色不对"
+            );
+        }
     }
 
     /// 组件级令牌必须在装载时从产品色推导出来，而不是留着框架的旧值。

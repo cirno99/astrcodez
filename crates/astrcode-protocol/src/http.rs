@@ -1196,5 +1196,131 @@ pub struct UpdateUiPreferencesRequest {
     pub kanban_ignored_project_paths: Vec<String>,
 }
 
+/// 代码浏览：目录里的一项。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileEntryDto {
+    /// 名字，不含路径分隔符。
+    pub name: String,
+    /// 相对浏览根目录的路径，分隔符统一为 `/`。
+    pub path: String,
+    pub is_dir: bool,
+}
+
+/// GET /api/files/tree 的响应：被列举目录下的一层条目。
+///
+/// 只给一层：浏览器按展开动作逐层取，服务端因此不必递归一个可能很大的仓库。
+/// 条目已排好序（目录在前，同类按名字），两个宿主不必各自再排一遍。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileTreeResponseDto {
+    /// 被列举目录相对根目录的路径；根目录为空串。
+    pub path: String,
+    pub entries: Vec<FileEntryDto>,
+}
+
+/// GET /api/files/content 的响应。
+///
+/// `binary` 为真时 `text` 为空、`total_lines` 为 0：文件不是 UTF-8 文本，无从按代码展示。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileContentResponseDto {
+    pub path: String,
+    pub size_bytes: u64,
+    pub binary: bool,
+    /// 文件超出单次读取上限，`text` 只是前面的若干行。
+    pub truncated: bool,
+    /// 整个文件的行数；`truncated` 为真时它大于 `text` 的行数。
+    pub total_lines: usize,
+    pub text: String,
+}
+
+/// 工作区文件相对 git HEAD 的状态。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum FileChangeStateDto {
+    /// 已被 git 跟踪，且与 HEAD 不同。
+    Modified,
+    /// 未被跟踪的新文件，整份内容都算新增。
+    Untracked,
+    /// 已被跟踪且与 HEAD 一致。
+    Unchanged,
+    /// 文件不是 UTF-8 文本，无法按行比较。
+    Binary,
+    /// 根目录不在 git 工作树里。
+    NotARepository,
+    /// 找不到可用的 `git` 命令。
+    GitUnavailable,
+}
+
+/// GET /api/files/diff 的响应：文件相对 git HEAD 的未提交改动。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileDiffResponseDto {
+    pub path: String,
+    pub state: FileChangeStateDto,
+    /// 统一 diff 文本；只有 `Modified` 与 `Untracked` 会带正文。
+    pub unified_diff: String,
+    pub insertions: usize,
+    pub deletions: usize,
+    /// diff 超出单次返回上限，`unified_diff` 被截断。
+    pub truncated: bool,
+}
+
+/// 工作区清单里的一项相对 git HEAD 的处境。
+///
+/// 与逐文件的 [`FileChangeStateDto`] 分开：这里只描述清单里的条目，没有「读不出内容」这类
+/// 单文件才有的处境，却多了「被删掉」「换了路径」这些清单才看得见的处境。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum GitStatusEntryStateDto {
+    /// 已被跟踪，且与 HEAD 不同。
+    Modified,
+    /// 相对 HEAD 是新出现的（索引里已暂存的新文件）。
+    Added,
+    /// 已被跟踪，但工作区里已经没有它。
+    Deleted,
+    /// 相对 HEAD 换了路径；清单里按新路径给出。
+    Renamed,
+    /// 未被跟踪的新文件，整份内容都算新增。
+    Untracked,
+    /// 合并冲突：工作区里的内容不是任何一方的定稿。
+    Conflicted,
+}
+
+/// 工作区清单能否取到。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum GitStatusAvailabilityDto {
+    /// 拿到了清单；`entries` 为空表示工作区没有未提交的改动。
+    Available,
+    /// 根目录不在 git 工作树里。
+    NotARepository,
+    /// 找不到可用的 `git` 命令，或命令执行失败。
+    GitUnavailable,
+}
+
+/// 工作区清单里的一项改动。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStatusEntryDto {
+    /// 相对浏览根目录的路径，分隔符统一为 `/`。
+    pub path: String,
+    pub state: GitStatusEntryStateDto,
+}
+
+/// GET /api/files/status 的响应：整个工作区相对 git HEAD 的未提交改动清单。
+///
+/// 条目顺序就是 git 自己的输出顺序（被跟踪的改动在前、未跟踪的在后），两个宿主不必各自
+/// 再排一遍；`Renamed` 只带新路径，原路径在清单里没有可点的动作，因此不上线缆。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitStatusResponseDto {
+    pub availability: GitStatusAvailabilityDto,
+    pub entries: Vec<GitStatusEntryDto>,
+    /// 改动条目超出单次返回上限，`entries` 只是前面的一部分。
+    pub truncated: bool,
+}
+
 #[cfg(test)]
 mod tests;
