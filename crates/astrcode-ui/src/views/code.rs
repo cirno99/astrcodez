@@ -3,7 +3,8 @@
 //! 数据全部走 server 的 `/api/files/*`：`astrcode-ui` 是宿主无关层，自己读不了磁盘，两个宿主
 //! 因此共用这一页（ADR 0001）。浏览根目录由外壳注入（当前会话的工作目录）。
 //!
-//! 取用是按需的：目录随展开取一层，正文与变更只在真正要显示时才取，切栏不会重复取同一份。
+//! 取用是按需的：目录随展开取一层，选中的文件则把正文与 diff 一起取——正文栏要按 diff 画
+//! 变更标记，两面因此不再各取各的。
 
 use std::sync::Arc;
 
@@ -14,6 +15,7 @@ use gpui_kit::{
     AnyElement, App, Context, EventEmitter, Hsla, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Task,
     Window,
+    base::TextSelectionHandle,
     component::{ActiveTheme as _, Size, h_flex, highlighter::HighlightTheme, v_flex},
     div, px,
 };
@@ -21,11 +23,14 @@ use gpui_kit::{
 use super::{icon_button, page_header};
 use crate::{api::Api, icons::IconName};
 
+mod annotate;
 mod changes;
 mod diff;
 mod editor;
+mod selectable;
 mod tree;
 
+use annotate::{LineChange, line_changes};
 use changes::{availability_note, entry_label, section_label};
 use diff::{change_summary, render_diff, state_label};
 use editor::{language_for_path, render_code};
@@ -74,6 +79,10 @@ pub struct CodeView {
     changes: Option<Loaded<GitStatusResponseDto>>,
     /// 侧边栏是否显示；收起后由页头给展开入口。
     sidebar_open: bool,
+    /// 正文每行的变更标记，下标与正文行序一致；正文或 diff 换一份就重算。
+    line_marks: Vec<Option<LineChange>>,
+    /// 整份正文共用的一条选择句柄：逐行 run 按行序拼成一份可选文档。
+    selection: TextSelectionHandle,
     /// 语法高亮主题；随产品主题固定，构造一次。
     highlight_theme: Arc<HighlightTheme>,
     /// 目录列举的任务；换一次句柄即取消上一次。
@@ -99,6 +108,8 @@ impl CodeView {
             changes: None,
             // 侧边栏一开始是显示的，页头因此不挂展开入口。
             sidebar_open: true,
+            line_marks: Vec::new(),
+            selection: TextSelectionHandle::new(String::new(), cx),
             // 高亮调色板跟产品主题走（`theme::code_highlight_style` 装进去的那份），
             // 不用框架自带的深色主题：它与产品底色对不上。
             highlight_theme: cx.theme().highlight_theme.clone(),
@@ -118,6 +129,9 @@ impl CodeView {
         self.selected = None;
         self.content = None;
         self.diff = None;
+        // 上一个项目里的行号与选区都不属于新根目录。
+        self.line_marks.clear();
+        self.selection = TextSelectionHandle::new(String::new(), cx);
         self.changes = None;
         self.fetch_dir(String::new(), cx);
         self.fetch_changes(cx);
@@ -130,10 +144,16 @@ impl CodeView {
     }
 
     /// 丢掉全部目录缓存再取一遍根目录与改动清单：agent 刚建出、刚改过的文件因此能出现。
+    ///
+    /// 当前文件的正文与 diff 也一起丢掉重取：不丢的话 [`Self::reload_file`] 会因为「已经取过」
+    /// 直接返回，正文与变更标记会停在刷新前那一份。
     fn refresh(&mut self, cx: &mut Context<Self>) {
         self.tree.clear();
         self.fetch_dir(String::new(), cx);
         self.fetch_changes(cx);
+        self.content = None;
+        self.diff = None;
+        self.line_marks.clear();
         self.reload_file(cx);
     }
 
@@ -173,6 +193,7 @@ impl CodeView {
         self.selected = Some(path);
         self.content = None;
         self.diff = None;
+        self.line_marks.clear();
         self.reload_file(cx);
         cx.notify();
     }
@@ -186,38 +207,47 @@ impl CodeView {
         cx.notify();
     }
 
-    /// 取当前要显示的那一面；已经取过的就不重复取。
+    /// 取当前选中的文件；正文与 diff 一起取，两份都到手才重算标记。
+    ///
+    /// 已经取过的那份不重复取：切栏与刷新都不会白跑一次请求。
     fn reload_file(&mut self, cx: &mut Context<Self>) {
         let Some(path) = self.selected.clone() else {
             return;
         };
-        let needs_fetch = match self.pane {
-            Pane::Content => self.content.is_none(),
-            Pane::Diff => self.diff.is_none(),
-        };
-        if !needs_fetch {
+        if self.content.is_some() && self.diff.is_some() {
             return;
         }
 
         let api = self.api.clone();
         let root = self.root.clone();
-        let pane = self.pane;
         self.file_task = Some(cx.spawn(async move |this, cx| {
-            let (content, diff) = match pane {
-                Pane::Content => (Some(api.file_content(&root, &path).await), None),
-                Pane::Diff => (None, Some(api.file_diff(&root, &path).await)),
-            };
+            let (content, diff) =
+                futures_util::join!(api.file_content(&root, &path), api.file_diff(&root, &path));
             this.update(cx, |this, cx| {
-                if let Some(result) = content {
-                    this.content = Some(to_loaded(result));
+                this.content = Some(to_loaded(content));
+                this.diff = Some(to_loaded(diff));
+                if let Some(Loaded::Ready(content)) = &this.content {
+                    // 换一份正文就换一条句柄：旧句柄上的选择快照落在新正文上会指错行。
+                    this.selection = TextSelectionHandle::new(content.text.clone(), cx);
                 }
-                if let Some(result) = diff {
-                    this.diff = Some(to_loaded(result));
-                }
+                this.refresh_marks();
                 cx.notify();
             })
             .ok();
         }));
+    }
+
+    /// 重算正文的变更标记：行序由正文定，每行的状态由 diff 定。
+    ///
+    /// 少一份就给空表：没有标记的正文照常显示，比留一份对不上行的旧标记好。
+    fn refresh_marks(&mut self) {
+        self.line_marks.clear();
+        let (Some(Loaded::Ready(content)), Some(Loaded::Ready(diff))) = (&self.content, &self.diff)
+        else {
+            return;
+        };
+        let lines = editor::line_ranges(&content.text).len();
+        self.line_marks = line_changes(&diff.unified_diff, lines);
     }
 
     /// 取整个工作区相对 HEAD 的改动清单。
@@ -508,7 +538,14 @@ impl CodeView {
                 Some(Loaded::Failed(message)) => return placeholder(message, cx),
                 Some(Loaded::Ready(content)) => (
                     content_meta(content),
-                    render_content(content, &self.highlight_theme, window, cx),
+                    render_content(
+                        content,
+                        &self.highlight_theme,
+                        &self.line_marks,
+                        &self.selection,
+                        window,
+                        cx,
+                    ),
                 ),
             },
             Pane::Diff => match &self.diff {
@@ -595,6 +632,8 @@ fn content_meta(content: &FileContentResponseDto) -> String {
 fn render_content(
     content: &FileContentResponseDto,
     theme: &HighlightTheme,
+    marks: &[Option<LineChange>],
+    selection: &TextSelectionHandle,
     window: &Window,
     cx: &App,
 ) -> AnyElement {
@@ -602,7 +641,7 @@ fn render_content(
         return placeholder("二进制文件，无法按代码展示。", cx);
     }
     let language = language_for_path(&content.path);
-    render_code(&content.text, language, theme, window, cx)
+    render_code(&content.text, language, theme, marks, selection, window, cx)
 }
 
 fn placeholder(text: impl Into<SharedString>, cx: &App) -> AnyElement {

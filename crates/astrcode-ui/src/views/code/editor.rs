@@ -3,13 +3,17 @@
 //! 这里没有可编辑的输入面，也没有光标：正文只用来「看」，因此不存在误改的可能。
 //! 高亮来自 gpui-component 的 tree-sitter 高亮器，语言按文件扩展名推断。
 //!
+//! 行号与代码之间那条窄条是相对 HEAD 的变更标记（绿=新增、黄=改动、红=删除），行本身
+//! 参与窗口级文本选择；两者的来源见 [`super::annotate`] 与 [`super::selectable`]。
+//!
 //! 行切分与样式裁剪都是纯函数（不碰窗口），可以脱离 GPU 测试；只有最后的元素拼装需要 `Window`。
 
 use std::ops::Range;
 
 use gpui_kit::{
-    AnyElement, App, HighlightStyle, IntoElement, ParentElement as _, Styled as _, StyledText,
-    Window,
+    AnyElement, App, HighlightStyle, Hsla, IntoElement, ParentElement as _, SharedString,
+    Styled as _, Window,
+    base::TextSelectionHandle,
     component::{
         ActiveTheme as _, h_flex,
         highlighter::{HighlightTheme, SyntaxHighlighter},
@@ -19,6 +23,8 @@ use gpui_kit::{
 };
 use ropey::Rope;
 
+use super::{annotate::LineChange, selectable::SelectableLine};
+
 /// 一次渲染的行数上限。
 ///
 /// 正文可能有几十万行，逐行建元素会把帧时间拖垮；服务端已经按字节截断过一次，这里再按
@@ -27,6 +33,9 @@ pub(super) const MAX_RENDERED_LINES: usize = 2000;
 
 /// 行号槽的宽度。
 const GUTTER_WIDTH: f32 = 44.0;
+
+/// 变更标记条的宽度。
+const MARK_WIDTH: f32 = 3.0;
 
 /// 按扩展名推断高亮语言；认不出来按纯文本。
 ///
@@ -115,13 +124,16 @@ pub(super) fn clip_to_line(
     clipped
 }
 
-/// 渲染只读代码正文：每行一个「行号 + 该行高亮文本」的横排。
+/// 渲染只读代码正文：每行一个「行号 + 变更标记 + 该行高亮文本」的横排。
 ///
-/// 行号与正文同处一行，因此两者不会错位；正文不换行，超宽时由外层横向滚动。
+/// 三者同处一行，因此不会错位；正文不换行，超宽时由外层横向滚动。`changes` 的下标与行序一致
+/// （见 [`super::annotate::line_changes`]），比正文短的部分按「没变过」算。
 pub(super) fn render_code(
     text: &str,
     language: &str,
     theme: &HighlightTheme,
+    changes: &[Option<LineChange>],
+    selection: &TextSelectionHandle,
     window: &Window,
     cx: &App,
 ) -> AnyElement {
@@ -138,9 +150,6 @@ pub(super) fn render_code(
     // 字号不在这里改：行号与正文必须同字号，两边都取窗口默认值就自然对齐。
     let mut column = v_flex().w_full().min_w_0().py_2();
     for (index, line) in ranges.iter().take(rendered).enumerate() {
-        let runs = clip_to_line(line, &styles);
-        let body = StyledText::new(text[line.clone()].to_owned())
-            .with_default_highlights(&default_style, runs);
         column = column.child(
             h_flex()
                 .w_full()
@@ -155,8 +164,28 @@ pub(super) fn render_code(
                         .text_color(cx.theme().muted_foreground)
                         .child(format!("{:>digits$}", index + 1)),
                 )
+                // 没变过的行也占住这一条：少画一列会让同一份正文的代码左右参差。
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .w(px(MARK_WIDTH))
+                        .mr_2()
+                        .self_stretch()
+                        .bg(changes
+                            .get(index)
+                            .copied()
+                            .flatten()
+                            .map_or_else(|| cx.theme().transparent, |change| change_color(change, cx))),
+                )
                 // 代码的缩进靠空格表达，且必须独占一行：换行会让行号与正文错位。
-                .child(div().min_w_0().whitespace_nowrap().child(body)),
+                .child(div().min_w_0().whitespace_nowrap().child(SelectableLine::new(
+                    SharedString::from(format!("code-line-{index}")),
+                    selection.clone(),
+                    index as u64,
+                    text[line.clone()].to_owned(),
+                    clip_to_line(line, &styles),
+                    default_style.clone(),
+                ))),
         );
     }
 
@@ -170,6 +199,15 @@ pub(super) fn render_code(
         );
     }
     column.into_any_element()
+}
+
+/// 变更标记条的颜色：绿=新增、黄=改动、红=删除。
+fn change_color(change: LineChange, cx: &App) -> Hsla {
+    match change {
+        LineChange::Added => cx.theme().success,
+        LineChange::Modified => cx.theme().warning,
+        LineChange::Deleted => cx.theme().danger,
+    }
 }
 
 #[cfg(test)]
