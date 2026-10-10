@@ -6,8 +6,30 @@ license.workspace = true
 description = "宿主无关的 UI 层：协议客户端、会话状态与 gpui-kit 视图，由桌面 App 与 Web UI 共用"
 
 [dependencies]
+gpui-kit = "0.7.1"
+astrcode-core = { path = "../astrcode-core" }
+astrcode-protocol = { path = "../astrcode-protocol" }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+futures-util = { workspace = true, features = ["io"] }
+url = { workspace = true }
+rustc-hash = { workspace = true }
+# 语法高亮器收 `ropey::Rope`，而 gpui-component 把版本钉死在这个 beta 上；
+# 只有取同一个版本，两边看到的才是同一个 `Rope` 类型。
+ropey = "=2.0.0-beta.1"
+# 双栏变更视图逐行对齐用：与服务端算 diff 的是同一份算法与版本。
+similar = { workspace = true }
+
+# 高亮靠 tree-sitter，而 gpui-component 只为非 wasm 目标声明这些依赖（wasm 侧由它的高亮器
+# stub 顶上，见 `highlighter/wasm_stub.rs`）。把这些特性开给 wasm，高亮器模块就会引用到不存在
+# 的 `tree_sitter` 而编译不过，所以语言特性只对非 wasm 目标开。
+#
 # 语言子集按「本仓库 + 常见项目」选：每个语言特性都会编译一份 C 语法库，
 # 全开（`tree-sitter-languages`）会明显拖长构建与增大产物。
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
 gpui-kit = { version = "0.7.1", features = [
     "tree-sitter-bash",
     "tree-sitter-c",
@@ -26,21 +48,6 @@ gpui-kit = { version = "0.7.1", features = [
     "tree-sitter-yaml",
     "tree-sitter-zig",
 ] }
-astrcode-core = { path = "../astrcode-core" }
-astrcode-protocol = { path = "../astrcode-protocol" }
-chrono = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-thiserror = { workspace = true }
-tracing = { workspace = true }
-futures-util = { workspace = true, features = ["io"] }
-url = { workspace = true }
-rustc-hash = { workspace = true }
-# 语法高亮器收 `ropey::Rope`，而 gpui-component 把版本钉死在这个 beta 上；
-# 只有取同一个版本，两边看到的才是同一个 `Rope` 类型。
-ropey = "=2.0.0-beta.1"
-# 双栏变更视图逐行对齐用：与服务端算 diff 的是同一份算法与版本。
-similar = { workspace = true }
 
 [dev-dependencies]
 gpui-kit = { version = "0.7.1", features = ["test-support"] }
