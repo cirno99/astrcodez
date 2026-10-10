@@ -15,7 +15,6 @@ use gpui_kit::{
     AnyElement, App, Context, EventEmitter, Hsla, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Task,
     Window,
-    base::TextSelectionHandle,
     component::{ActiveTheme as _, Size, h_flex, highlighter::HighlightTheme, v_flex},
     div, px,
 };
@@ -81,8 +80,6 @@ pub struct CodeView {
     sidebar_open: bool,
     /// 正文每行的变更标记，下标与正文行序一致；正文或 diff 换一份就重算。
     line_marks: Vec<Option<LineChange>>,
-    /// 整份正文共用的一条选择句柄：逐行 run 按行序拼成一份可选文档。
-    selection: TextSelectionHandle,
     /// 语法高亮主题；随产品主题固定，构造一次。
     highlight_theme: Arc<HighlightTheme>,
     /// 目录列举的任务；换一次句柄即取消上一次。
@@ -109,7 +106,6 @@ impl CodeView {
             // 侧边栏一开始是显示的，页头因此不挂展开入口。
             sidebar_open: true,
             line_marks: Vec::new(),
-            selection: TextSelectionHandle::new(String::new(), cx),
             // 高亮调色板跟产品主题走（`theme::code_highlight_style` 装进去的那份），
             // 不用框架自带的深色主题：它与产品底色对不上。
             highlight_theme: cx.theme().highlight_theme.clone(),
@@ -129,9 +125,8 @@ impl CodeView {
         self.selected = None;
         self.content = None;
         self.diff = None;
-        // 上一个项目里的行号与选区都不属于新根目录。
+        // 上一个项目里的行号不属于新根目录。
         self.line_marks.clear();
-        self.selection = TextSelectionHandle::new(String::new(), cx);
         self.changes = None;
         self.fetch_dir(String::new(), cx);
         self.fetch_changes(cx);
@@ -226,10 +221,6 @@ impl CodeView {
             this.update(cx, |this, cx| {
                 this.content = Some(to_loaded(content));
                 this.diff = Some(to_loaded(diff));
-                if let Some(Loaded::Ready(content)) = &this.content {
-                    // 换一份正文就换一条句柄：旧句柄上的选择快照落在新正文上会指错行。
-                    this.selection = TextSelectionHandle::new(content.text.clone(), cx);
-                }
                 this.refresh_marks();
                 cx.notify();
             })
@@ -538,14 +529,7 @@ impl CodeView {
                 Some(Loaded::Failed(message)) => return placeholder(message, cx),
                 Some(Loaded::Ready(content)) => (
                     content_meta(content),
-                    render_content(
-                        content,
-                        &self.highlight_theme,
-                        &self.line_marks,
-                        &self.selection,
-                        window,
-                        cx,
-                    ),
+                    render_content(content, &self.highlight_theme, &self.line_marks, window, cx),
                 ),
             },
             Pane::Diff => match &self.diff {
@@ -633,7 +617,6 @@ fn render_content(
     content: &FileContentResponseDto,
     theme: &HighlightTheme,
     marks: &[Option<LineChange>],
-    selection: &TextSelectionHandle,
     window: &Window,
     cx: &App,
 ) -> AnyElement {
@@ -641,7 +624,7 @@ fn render_content(
         return placeholder("二进制文件，无法按代码展示。", cx);
     }
     let language = language_for_path(&content.path);
-    render_code(&content.text, language, theme, marks, selection, window, cx)
+    render_code(&content.text, language, theme, marks, window, cx)
 }
 
 fn placeholder(text: impl Into<SharedString>, cx: &App) -> AnyElement {

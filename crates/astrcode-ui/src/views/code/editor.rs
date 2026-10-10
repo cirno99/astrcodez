@@ -13,7 +13,6 @@ use std::ops::Range;
 use gpui_kit::{
     AnyElement, App, HighlightStyle, Hsla, IntoElement, ParentElement as _, SharedString,
     Styled as _, Window,
-    base::TextSelectionHandle,
     component::{
         ActiveTheme as _, h_flex,
         highlighter::{HighlightTheme, SyntaxHighlighter},
@@ -133,7 +132,6 @@ pub(super) fn render_code(
     language: &str,
     theme: &HighlightTheme,
     changes: &[Option<LineChange>],
-    selection: &TextSelectionHandle,
     window: &Window,
     cx: &App,
 ) -> AnyElement {
@@ -180,7 +178,6 @@ pub(super) fn render_code(
                 // 代码的缩进靠空格表达，且必须独占一行：换行会让行号与正文错位。
                 .child(div().min_w_0().whitespace_nowrap().child(SelectableLine::new(
                     SharedString::from(format!("code-line-{index}")),
-                    selection.clone(),
                     index as u64,
                     text[line.clone()].to_owned(),
                     clip_to_line(line, &styles),
