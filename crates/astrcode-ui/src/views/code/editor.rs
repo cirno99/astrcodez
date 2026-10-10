@@ -253,15 +253,83 @@ pub(super) fn render_code(
     column.into_any_element()
 }
 
-/// 一行的样式：两层各自裁到这一行，再按 [`LineLayers`] 的次序拼起来。
+/// 一行的样式：两层各自裁到这一行，再叠成一层——查找命中盖住语法色。
+///
+/// 交给 `StyledText` 的这一层必须按起点有序、互不重叠：它按「每条 run 依次吃掉一段文本」推出
+/// 样式，重叠会让它算出比正文更长的 run，直接 panic（`invalid text run`）。两层各自有序还不够
+/// ——命中通常落在某个 token 内部，首尾相接必然重叠，因此这里按两层的边界把行切成小段再逐段
+/// 选样式（见 [`stack_layers`]）。
 fn line_highlights(
     line: &Range<usize>,
     layers: &LineLayers<'_>,
 ) -> Vec<(Range<usize>, HighlightStyle)> {
-    let mut highlights = clip_to_line(line, layers.syntax);
-    highlights.extend(clip_to_line(line, layers.find));
-    highlights
+    stack_layers(
+        &clip_to_line(line, layers.syntax),
+        &clip_to_line(line, layers.find),
+    )
 }
+
+/// 把两层样式叠成一层：`over` 盖住 `under`，结果按起点有序、互不重叠。
+///
+/// 两层各自有序且互不重叠（前者来自 [`clip_to_line`]，后者来自
+/// [`crate::find::literal_matches`]），因此各走一个游标就够：取两层剩下的边界里最近的那个，
+/// 把行切成小段，每段取盖在上面那层的样式，没有就取下面那层。
+fn stack_layers(
+    under: &[(Range<usize>, HighlightStyle)],
+    over: &[(Range<usize>, HighlightStyle)],
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    let mut stacked: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
+    let mut under_ix = 0;
+    let mut over_ix = 0;
+    let mut cursor = 0;
+    loop {
+        while under
+            .get(under_ix)
+            .is_some_and(|(range, _)| range.end <= cursor)
+        {
+            under_ix += 1;
+        }
+        while over
+            .get(over_ix)
+            .is_some_and(|(range, _)| range.end <= cursor)
+        {
+            over_ix += 1;
+        }
+        // 当前区间之前已经过去的部分不再贡献边界，只剩下它的终点。
+        let next = [under.get(under_ix), over.get(over_ix)]
+            .into_iter()
+            .flatten()
+            .flat_map(|(range, _)| [range.start, range.end])
+            .filter(|position| *position > cursor)
+            .min();
+        let Some(end) = next else {
+            break;
+        };
+        let style = style_at(over, over_ix, cursor).or_else(|| style_at(under, under_ix, cursor));
+        if let Some(style) = style {
+            // 被盖住那层的边界不该把上面的色切成几段：相邻同色的段并成一段。
+            match stacked.last_mut() {
+                Some((range, last)) if *last == style && range.end == cursor => range.end = end,
+                _ => stacked.push((cursor..end, style)),
+            }
+        }
+        cursor = end;
+    }
+    stacked
+}
+
+/// `layer` 从 `index` 起的那条区间盖住 `position` 时的样式；没有盖住就是 `None`。
+fn style_at(
+    layer: &[(Range<usize>, HighlightStyle)],
+    index: usize,
+    position: usize,
+) -> Option<HighlightStyle> {
+    layer
+        .get(index)
+        .filter(|(range, _)| range.start <= position && position < range.end)
+        .map(|(_, style)| *style)
+}
+
 
 /// 正文栏的滚动容器：两个方向都能滚、能拿焦点，里面的行参与窗口级文本选择。
 ///
@@ -506,6 +574,99 @@ mod tests {
             "Ctrl+C 该把选中的两行写进剪贴板，实际复制到 {copied:?}"
         );
     }
+
+    /// 叠起来的样式层必须有序、互不重叠，且命中盖住语法色。
+    ///
+    /// 交给 `StyledText` 的那一层一旦重叠，它按 run 长度推样式时会算出比正文更长的 run 并直接
+    /// panic（`invalid text run`）——正文里搜一个词就崩，正是这个不变式被破坏后的样子。
+    ///
+    /// 测试用的样式只给一层底色，好看出叠出来的每一段归哪一层。
+    fn style(color: Hsla) -> HighlightStyle {
+        HighlightStyle {
+            background_color: Some(color),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn stacked_layers_stay_sorted_and_disjoint() {
+        let under = vec![(0..5, style(Hsla::red())), (7..10, style(Hsla::red()))];
+        // 命中落在语法区间内部：切成三段，中间那段归命中。
+        assert_eq!(
+            stack_layers(&under, &[(2..4, style(Hsla::blue()))]),
+            vec![
+                (0..2, style(Hsla::red())),
+                (2..4, style(Hsla::blue())),
+                (4..5, style(Hsla::red())),
+                (7..10, style(Hsla::red())),
+            ]
+        );
+
+        // 命中横跨语法区间的边界时，两侧各留一段语法色，中间的空隙也归命中。
+        assert_eq!(
+            stack_layers(&under, &[(3..8, style(Hsla::blue()))]),
+            vec![
+                (0..3, style(Hsla::red())),
+                (3..8, style(Hsla::blue())),
+                (8..10, style(Hsla::red())),
+            ]
+        );
+
+        // 两层都盖满整行时，叠出来的长度必须正好等于正文长度。
+        let stacked = stack_layers(
+            &[(0..6, style(Hsla::red()))],
+            &[(1..6, style(Hsla::blue()))],
+        );
+        assert_eq!(
+            stacked.iter().map(|(range, _)| range.len()).sum::<usize>(),
+            6
+        );
+    }
+
+    /// 命中落在语法 token 里时，那一行仍要画得出来。
+    ///
+    /// 这条走的正是崩溃现场：正文栏把语法层与命中层叠起来交给 `StyledText`，两层一重叠就在框架
+    /// 里 panic。手写两层而不是跑 tree-sitter，是为了让重叠位置是确定的。
+    #[gpui_kit::test]
+    fn a_find_hit_inside_a_syntax_token_still_draws_the_line(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+        });
+        let syntax = vec![(0..5, style(Hsla::red()))];
+        let find = vec![(2..4, style(Hsla::blue()))];
+
+        let (_, cx) = cx.add_window_view(move |_, _| OverlapProbe { syntax, find });
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+    }
+
+    /// 一行的两层样式（语法与命中），叠好之后交给 [`SelectableLine`]。
+    struct OverlapProbe {
+        syntax: Vec<(Range<usize>, HighlightStyle)>,
+        find: Vec<(Range<usize>, HighlightStyle)>,
+    }
+
+    impl Render for OverlapProbe {
+        fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let text = "abcdefgh";
+            div().size_full().child(SelectableLine::new(
+                "overlap-line",
+                0,
+                text,
+                line_highlights(
+                    &(0..text.len()),
+                    &LineLayers {
+                        syntax: &self.syntax,
+                        find: &self.find,
+                    },
+                ),
+                window.text_style(),
+            ))
+        }
+    }
+
 
     /// 量滚动量程与测复制用的最小正文栏：一个能拿焦点的滚动容器加一份被虚拟化的正文。
     ///

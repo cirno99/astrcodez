@@ -20,7 +20,7 @@ use astrcode_protocol::{
 };
 use gpui_kit::{
     AnyElement, App, AppContext as _, AsyncApp, ClipboardItem, Context, Entity, EventEmitter,
-    Focusable as _, FontWeight, Hsla, InteractiveElement as _, IntoElement, Keystroke,
+    Focusable as _, FollowMode, FontWeight, Hsla, InteractiveElement as _, IntoElement, Keystroke,
     ListAlignment, ListOffset, ListState, ParentElement as _, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, Task, WeakEntity, Window,
     component::{
@@ -256,6 +256,10 @@ pub struct ChatView {
 
 impl ChatView {
     pub fn new(api: Api, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // 转录默认贴着末尾：跟随交给列表自己的「尾随」模式，用户往上滚就暂停、滚回底部自动接上
+        // （见 [`Self::after_state_change`]）。
+        let transcript = ListState::new(0, ListAlignment::Bottom, px(600.));
+        transcript.set_follow_mode(FollowMode::Tail);
         // 输入区是多行的：回车提交、Shift+Enter 换行，高度随内容长到 8 行。
         let input = cx.new(|cx| {
             TextareaState::new(window, cx)
@@ -325,7 +329,7 @@ impl ChatView {
             preview_expanded: HashMap::new(),
             ask_user: HashMap::new(),
             title: None,
-            transcript: ListState::new(0, ListAlignment::Bottom, px(600.)),
+            transcript,
             transcript_synced_revision: 0,
             error: None,
             stream_task: None,
@@ -386,6 +390,8 @@ impl ChatView {
     pub fn open_session(&mut self, session_id: String, cx: &mut Context<Self>) {
         self.reset_session_view(cx);
         self.session_id = Some(session_id.clone());
+        // 换会话从末尾看起：上一个会话里往上翻过的话，跟随已经停着，新会话不该继承那个位置。
+        self.transcript.set_follow_mode(FollowMode::Tail);
 
         let api = self.api.clone();
         self.stream_task = Some(cx.spawn(async move |this, cx| {
@@ -553,7 +559,11 @@ impl ChatView {
         // 控制态一变就可能从「执行中」落回空闲：那是队列出队的时候。
         self.flush_queue(cx);
         self.sync_transcript_list();
-        self.transcript.scroll_to_end();
+        // 只在用户还贴着末尾时才钉到最新一条：往上翻看历史时，新到的输出不该把视角拽回去。
+        // 「还贴着末尾」由列表的尾随模式维护——用户往上滚即暂停，滚回底部自动接上。
+        if self.transcript.is_following_tail() {
+            self.transcript.scroll_to_end();
+        }
         cx.notify();
     }
 
@@ -1278,6 +1288,8 @@ impl ChatView {
             self.deliver_while_busy(text, cx);
             return;
         }
+        // 自己发的这条就是当下最新的一条：即使此前在翻历史，也把视角带回末尾。
+        self.transcript.set_follow_mode(FollowMode::Tail);
 
         let api = self.api.clone();
         cx.spawn(async move |this, cx| {
