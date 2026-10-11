@@ -336,18 +336,39 @@ fn hash_canonical_json(hasher: &mut Sha256, value: &serde_json::Value) {
 /// 磁盘 s5r 扩展源（`~/.astrcode/extensions/` 与项目 `.astrcode/extensions/`）。
 pub struct DiskExtensionSource {
     extension_states: BTreeMap<String, bool>,
+    global_extensions_dir: PathBuf,
 }
 
 impl DiskExtensionSource {
     pub fn new(extension_states: BTreeMap<String, bool>) -> Self {
-        Self { extension_states }
+        Self {
+            extension_states,
+            global_extensions_dir: astrcode_dir().join("extensions"),
+        }
+    }
+
+    /// 覆盖全局扩展目录，仅供测试隔离运行机器上已安装的扩展。
+    #[cfg(feature = "testing")]
+    pub fn with_global_extensions_dir(
+        extension_states: BTreeMap<String, bool>,
+        global_extensions_dir: PathBuf,
+    ) -> Self {
+        Self {
+            extension_states,
+            global_extensions_dir,
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl ExtensionSource for DiskExtensionSource {
     async fn discover(&self, ctx: &ExtensionLoadContext) -> DiscoverExtensionsResult {
-        discover_all(ctx.working_dir.as_deref(), ctx.host_router.clone()).await
+        discover_all(
+            ctx.working_dir.as_deref(),
+            ctx.host_router.clone(),
+            &self.global_extensions_dir,
+        )
+        .await
     }
 
     fn is_enabled(&self, extension_id: &str) -> bool {
@@ -361,12 +382,12 @@ impl ExtensionSource for DiskExtensionSource {
 async fn discover_all(
     working_dir: Option<&str>,
     host_router: Option<Arc<HostRouter>>,
+    global_dir: &Path,
 ) -> DiscoverExtensionsResult {
     let mut result = DiscoverExtensionsResult::default();
 
-    let global_dir = astrcode_dir().join("extensions");
     if global_dir.exists() {
-        let global = discover_from_dir(&global_dir, host_router.clone()).await;
+        let global = discover_from_dir(global_dir, host_router.clone()).await;
         result.candidates.extend(global.candidates);
         result.failures.extend(global.failures);
     }
@@ -375,7 +396,7 @@ async fn discover_all(
         let project_dir = PathBuf::from(wd).join(".astrcode").join("extensions");
         // 从 $HOME 启动时项目扩展目录与全局目录是同一目录,重复扫描会触发
         // duplicate extension source key
-        if project_dir.exists() && !is_same_dir(&project_dir, &global_dir) {
+        if project_dir.exists() && !is_same_dir(&project_dir, global_dir) {
             let project = discover_from_dir(&project_dir, host_router).await;
             result.candidates.splice(0..0, project.candidates);
             result.failures.extend(project.failures);

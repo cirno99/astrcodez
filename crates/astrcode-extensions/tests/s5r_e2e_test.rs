@@ -753,7 +753,12 @@ async fn s5r_loader_discovers_manifest() {
     .unwrap();
 
     let runner = Arc::new(ExtensionRunner::new(Duration::from_secs(1)));
-    let source = DiskExtensionSource::new(BTreeMap::new());
+    // 全局扩展目录指向临时路径:真实 `~/.astrcode/extensions` 会让运行机器上已安装
+    // 的扩展一起注册,断言随即绑定到机器状态。
+    let source = DiskExtensionSource::with_global_extensions_dir(
+        BTreeMap::new(),
+        root.path().join("home/.astrcode/extensions"),
+    );
     let errors = sync_extension_sources(
         &runner,
         &ExtensionLoadContext {
