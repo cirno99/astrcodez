@@ -787,7 +787,7 @@ fn update_goal_tool_definition() -> ToolDefinition {
                 "status": {
                     "type": "string",
                     "enum": ["complete", "blocked"],
-                    "description": "Terminal status for the current goal. Use complete only when no required work remains; use blocked only after at least three consecutive goal turns hit the same blocker."
+                    "description": "Terminal status for the current goal."
                 }
             },
             "required": ["status"]

@@ -24,17 +24,13 @@ pub(crate) const TODO_WRITE_TOOL_NAME: &str = "todoWrite";
 const TODO_WRITE_DESCRIPTION: &str =
     "Update the session todo list to track multi-step task progress.\n\nWhen NOT to use:\n- \
      Simple Q&A or single straightforward task\n- One file, one edit, no progress tracking \
-     needed\n\nTips:\n- Multi-step work, task lists, or when progress tracking helps\n- Every \
-     item must declare `executor`: `self` (main agent does it directly) or `agent` (delegate; \
-     then `agentType` is required). For agent steps set `mode`: `parallel` when independent of \
-     other steps, `serial` otherwise. Default to `self` — delegate only when the step is an \
-     isolated non-trivial subtask, parallel investigation clearly pays off, or independent \
-     verification is warranted (see `agent` guidance). Revisit executors when new evidence \
-     changes dependencies.\n\nRules:\n- Send the full list every time (not a patch). Keep exactly \
-     one `in_progress`.\n- Mark `in_progress` BEFORE starting work. Mark `completed` only when \
-     fully done (tests pass, implementation complete).\n- After receiving new instructions, \
-     immediately add them as todos.\n- Each item: `content` (imperative: \"Fix auth bug\") + \
-     `activeForm` (continuous: \"Fixing auth bug\").";
+     needed\n\nTips:\n- Multi-step work, task lists, or when progress tracking helps\n- Default to \
+     `executor` = `self`; delegate only when the step is an isolated non-trivial subtask, parallel \
+     investigation clearly pays off, or independent verification is warranted. Revisit executors \
+     when new evidence changes dependencies.\n\nRules:\n- Send the full list every time (not a \
+     patch). Keep exactly one `in_progress`.\n- Mark `in_progress` BEFORE starting work. Mark \
+     `completed` only when fully done (tests pass, implementation complete).\n- After receiving new \
+     instructions, immediately add them as todos.";
 const PROGRESS_SCHEMA_VERSION: u32 = 2;
 const PROGRESS_FILE: &str = "progress.json";
 const REMINDER_THRESHOLD: u32 = 15;
@@ -574,7 +570,7 @@ fn todo_write_tool_definition() -> ToolDefinition {
                             "executor": {
                                 "type": "string",
                                 "enum": ["self", "agent"],
-                                "description": "Who executes this step: `self` for the main agent directly, `agent` to delegate to a subagent."
+                                "description": "Who executes this step."
                             },
                             "agentType": {
                                 "type": "string",
@@ -931,9 +927,14 @@ mod tests {
     #[test]
     fn tool_contract_forces_executor_decision() {
         let definition = todo_write_tool_definition();
-        assert!(definition.description.contains("`executor`"));
-        assert!(definition.description.contains("`agentType`"));
-        assert!(definition.description.contains("Default to `self`"));
+        // 只留 schema 给不出的策略：默认由主 agent 执行，委派要有理由。
+        assert!(definition.description.contains("Default to `executor` = `self`"));
+        for duplicated in ["`agentType` is required", "set `mode`", "imperative:"] {
+            assert!(
+                !definition.description.contains(duplicated),
+                "schema 内容 `{duplicated}` 不该在工具描述里复述"
+            );
+        }
         let properties = &definition.parameters["properties"]["todos"]["items"]["properties"];
         assert_eq!(properties["executor"]["enum"], json!(["self", "agent"]));
         assert_eq!(properties["mode"]["enum"], json!(["serial", "parallel"]));
