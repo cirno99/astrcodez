@@ -14,7 +14,9 @@ use astrcode_core::{
 };
 use tokio_util::sync::CancellationToken;
 
-use super::types::{ExchangeSummary, ProviderContributionId, ProviderRequestId};
+use super::types::{
+    ExchangeSummary, ProviderContributionId, ProviderRequestErrorKind, ProviderRequestId,
+};
 use crate::{
     config::ModelSelection,
     extension::{ExtensionCall, ExtensionCallContext, SessionCallContext, WorkspaceCallContext},
@@ -469,6 +471,58 @@ pub type ProviderContext = HookContext<ProviderPayload>;
 
 #[doc(hidden)]
 pub type RuntimeProviderContext = HookInput<ProviderPayload>;
+
+/// `provider_request_error` 的 payload。
+///
+/// 刻意不带消息快照：本阶段 handler 只能决定「是否重试」，不能改写请求。等
+/// `RetryWithEffect` 落地再补请求形状，免得扩展现在就开始依赖一个会被改写的契约。
+#[derive(Clone, Debug)]
+pub struct ProviderRequestErrorPayload {
+    model_id: String,
+    attempt: u32,
+    error_kind: ProviderRequestErrorKind,
+    error_message: String,
+}
+
+impl ProviderRequestErrorPayload {
+    pub(crate) fn new(
+        model_id: String,
+        attempt: u32,
+        error_kind: ProviderRequestErrorKind,
+        error_message: String,
+    ) -> Self {
+        Self {
+            model_id,
+            attempt,
+            error_kind,
+            error_message,
+        }
+    }
+
+    /// 实际解析后的模型（含 override），不是 session 默认模型。
+    pub fn model_id(&self) -> &str {
+        &self.model_id
+    }
+
+    /// 本次 provider 请求的第几次尝试，从 1 起（重试由 host 在独立尝试间计数）。
+    pub fn attempt(&self) -> u32 {
+        self.attempt
+    }
+
+    pub fn error_kind(&self) -> ProviderRequestErrorKind {
+        self.error_kind
+    }
+
+    pub fn error_message(&self) -> &str {
+        &self.error_message
+    }
+}
+
+/// `provider_request_error` 的 handler 上下文。
+pub type ProviderRequestErrorContext = HookContext<ProviderRequestErrorPayload>;
+
+#[doc(hidden)]
+pub type RuntimeProviderRequestErrorContext = HookInput<ProviderRequestErrorPayload>;
 
 /// Durable-success acknowledgement for one exact prepared provider contribution.
 #[derive(Clone, Debug)]

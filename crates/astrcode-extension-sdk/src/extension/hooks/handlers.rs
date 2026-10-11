@@ -8,12 +8,13 @@ use super::{
         CommandCompletionContext, CommandContext, CommandDiscoveryContext,
         ContinueAfterStopContext, LifecycleContext, PostCompactContext, PostToolUseContext,
         PreCompactContext, PreToolUseContext, PromptBuildContext, ProviderContext,
-        ProviderSettlementContext, ToolDiscoveryContext, UserMessageEnvelopeContext,
+        ProviderRequestErrorContext, ProviderSettlementContext, ToolDiscoveryContext,
+        UserMessageEnvelopeContext,
     },
     results::{
         ContinueAfterStopResult, HookResult, PostToolUseResult, PreCompactResult, PreToolUseResult,
-        PreparedProviderContribution, ProviderResult, ToolInputTransformResult,
-        UserMessageEnvelopeResult,
+        PreparedProviderContribution, ProviderRequestErrorResult, ProviderResult,
+        ToolInputTransformResult, UserMessageEnvelopeResult,
     },
     types::ExtensionError,
 };
@@ -49,6 +50,18 @@ pub trait PostToolUseHandler: Send + Sync {
 #[async_trait::async_trait]
 pub trait ProviderHandler: Send + Sync {
     async fn handle(&self, ctx: ProviderContext) -> Result<ProviderResult, ExtensionError>;
+}
+
+/// `provider_request_error` handler：provider 请求在流开始之前失败后的接管决定。
+///
+/// handler 只决定是否重试：它看不到流中途的失败（那已经发布了部分 transcript），
+/// 也不能改写请求；建议的延迟由 host 钳制。
+#[async_trait::async_trait]
+pub trait ProviderRequestErrorHandler: Send + Sync {
+    async fn handle(
+        &self,
+        ctx: ProviderRequestErrorContext,
+    ) -> Result<ProviderRequestErrorResult, ExtensionError>;
 }
 
 /// Stateful request-local contribution with an explicit prepare/acknowledge lifecycle.

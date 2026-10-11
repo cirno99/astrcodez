@@ -35,14 +35,17 @@ use astrcode_extension_sdk::{
         PostToolUseContext, PostToolUseHandler, PostToolUseResult, PreCompactContext,
         PreCompactHandler, PreCompactResult, PreToolUseAdmission, PreToolUseContext,
         PreToolUseHandler, PreToolUseResult, ProviderContext, ProviderEvent, ProviderHandler,
-        ProviderRequestId, ProviderResult, Registrar, SessionCommandKind, SlashCommand, StopReason,
-        ToolContext, ToolDiscovery, ToolDiscoveryContext, ToolDiscoveryHandler, ToolHandler,
-        ToolHookTarget, ToolInputTransformHandler, ToolInputTransformResult, ToolPlanContext,
+        ProviderRequestErrorContext, ProviderRequestErrorHandler, ProviderRequestErrorKind,
+        ProviderRequestErrorResult, ProviderRequestId, ProviderResult, Registrar,
+        SessionCommandKind, SlashCommand, StopReason, ToolContext, ToolDiscovery,
+        ToolDiscoveryContext, ToolDiscoveryHandler, ToolHandler, ToolHookTarget,
+        ToolInputTransformHandler, ToolInputTransformResult, ToolPlanContext,
         UserMessageEnvelopeContext, UserMessageEnvelopeHandler, UserMessageEnvelopeResult,
         internal::{
             RuntimeContinueAfterStopContext, RuntimeHookCallContext, RuntimePreToolUseContext,
-            RuntimeUserMessageEnvelopeContext, runtime_continue_after_stop_context,
-            runtime_pre_tool_use_context, runtime_provider_context,
+            RuntimeProviderRequestErrorContext, RuntimeUserMessageEnvelopeContext,
+            runtime_continue_after_stop_context, runtime_pre_tool_use_context,
+            runtime_provider_context, runtime_provider_request_error_context,
             runtime_user_message_envelope_context, wait_extension_tasks,
         },
     },
@@ -408,6 +411,19 @@ struct UserMessageEnvelopeProbeExtension {
 
 struct UserMessageEnvelopeProbe {
     result: UserMessageEnvelopeResult,
+    calls: Arc<AtomicUsize>,
+}
+
+struct ProviderRequestErrorProbeExtension {
+    id: &'static str,
+    priority: i32,
+    max_retries: u32,
+    result: ProviderRequestErrorResult,
+    calls: Arc<AtomicUsize>,
+}
+
+struct ProviderRequestErrorProbe {
+    result: ProviderRequestErrorResult,
     calls: Arc<AtomicUsize>,
 }
 
@@ -1078,6 +1094,35 @@ impl UserMessageEnvelopeHandler for UserMessageEnvelopeProbe {
 }
 
 #[async_trait::async_trait]
+impl Extension for ProviderRequestErrorProbeExtension {
+    fn manifest(&self) -> ExtensionManifest {
+        extension_manifest(self.id, &[ExtensionCapability::ProviderRequest])
+    }
+
+    fn register(&self, reg: &mut Registrar) {
+        reg.on_provider_request_error(
+            self.priority,
+            self.max_retries,
+            Arc::new(ProviderRequestErrorProbe {
+                result: self.result.clone(),
+                calls: Arc::clone(&self.calls),
+            }),
+        );
+    }
+}
+
+#[async_trait::async_trait]
+impl ProviderRequestErrorHandler for ProviderRequestErrorProbe {
+    async fn handle(
+        &self,
+        _ctx: ProviderRequestErrorContext,
+    ) -> Result<ProviderRequestErrorResult, ExtensionError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(self.result.clone())
+    }
+}
+
+#[async_trait::async_trait]
 impl Extension for RegistrationProbeExtension {
     fn manifest(&self) -> ExtensionManifest {
         extension_manifest("registration-probe", &self.capabilities)
@@ -1220,6 +1265,16 @@ fn continue_after_stop_ctx(continuations_this_turn: u32) -> RuntimeContinueAfter
 
 fn user_message_envelope_ctx(text: &str) -> RuntimeUserMessageEnvelopeContext {
     runtime_user_message_envelope_context(runtime_hook_call(), text, Vec::new())
+}
+
+fn provider_request_error_ctx(attempt: u32) -> RuntimeProviderRequestErrorContext {
+    runtime_provider_request_error_context(
+        runtime_hook_call(),
+        "model",
+        attempt,
+        ProviderRequestErrorKind::RateLimit,
+        "429 too many requests",
+    )
 }
 
 fn pre_tool_use_ctx(tool_name: &str, tool_input: serde_json::Value) -> RuntimePreToolUseContext {
@@ -3992,4 +4047,137 @@ async fn custom_event_delivery_has_session_state_and_quiescence_blocks_new_admis
     assert!(!runner.observe_custom_event(Arc::new(Event::from(event)), session.clone()));
 
     runner.resume_custom_event_session(&session_id, session);
+}
+
+#[tokio::test]
+async fn provider_request_error_retry_is_bounded_by_the_declared_budget() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let runner = ExtensionRunner::new(Duration::from_secs(1));
+    runner
+        .register(Arc::new(ProviderRequestErrorProbeExtension {
+            id: "budgeted-retry",
+            priority: 0,
+            max_retries: 2,
+            result: ProviderRequestErrorResult::Retry {
+                delay_ms: Some(10),
+                reason: "retry the rate limit".into(),
+            },
+            calls: Arc::clone(&calls),
+        }))
+        .await
+        .unwrap();
+
+    for attempt in 1..=2 {
+        let decision = runner
+            .emit_provider_request_error(provider_request_error_ctx(attempt))
+            .await
+            .unwrap();
+        assert!(
+            matches!(decision, ProviderRequestErrorResult::Retry { .. }),
+            "attempt {attempt} is within the declared budget"
+        );
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+    let exhausted = runner
+        .emit_provider_request_error(provider_request_error_ctx(3))
+        .await
+        .unwrap();
+    assert_eq!(exhausted, ProviderRequestErrorResult::Fail);
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "an exhausted handler must not be consulted again"
+    );
+}
+
+#[tokio::test]
+async fn provider_request_error_fail_vetoes_lower_priority_retries() {
+    let veto_calls = Arc::new(AtomicUsize::new(0));
+    let retry_calls = Arc::new(AtomicUsize::new(0));
+    let runner = ExtensionRunner::new(Duration::from_secs(1));
+    runner
+        .register(Arc::new(ProviderRequestErrorProbeExtension {
+            id: "a-veto",
+            priority: 10,
+            max_retries: 3,
+            result: ProviderRequestErrorResult::Fail,
+            calls: Arc::clone(&veto_calls),
+        }))
+        .await
+        .unwrap();
+    runner
+        .register(Arc::new(ProviderRequestErrorProbeExtension {
+            id: "b-retry",
+            priority: 5,
+            max_retries: 3,
+            result: ProviderRequestErrorResult::Retry {
+                delay_ms: None,
+                reason: "retry".into(),
+            },
+            calls: Arc::clone(&retry_calls),
+        }))
+        .await
+        .unwrap();
+
+    let decision = runner
+        .emit_provider_request_error(provider_request_error_ctx(1))
+        .await
+        .unwrap();
+
+    assert_eq!(decision, ProviderRequestErrorResult::Fail);
+    assert_eq!(veto_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        retry_calls.load(Ordering::SeqCst),
+        0,
+        "a veto must short-circuit the lower-priority handlers"
+    );
+}
+
+#[tokio::test]
+async fn provider_request_error_takes_the_first_retry_in_priority_order() {
+    let first_calls = Arc::new(AtomicUsize::new(0));
+    let second_calls = Arc::new(AtomicUsize::new(0));
+    let runner = ExtensionRunner::new(Duration::from_secs(1));
+    runner
+        .register(Arc::new(ProviderRequestErrorProbeExtension {
+            id: "a-first",
+            priority: 10,
+            max_retries: 3,
+            result: ProviderRequestErrorResult::Retry {
+                delay_ms: Some(1_000),
+                reason: "first".into(),
+            },
+            calls: Arc::clone(&first_calls),
+        }))
+        .await
+        .unwrap();
+    runner
+        .register(Arc::new(ProviderRequestErrorProbeExtension {
+            id: "b-second",
+            priority: 5,
+            max_retries: 3,
+            result: ProviderRequestErrorResult::Retry {
+                delay_ms: Some(2_000),
+                reason: "second".into(),
+            },
+            calls: Arc::clone(&second_calls),
+        }))
+        .await
+        .unwrap();
+
+    let decision = runner
+        .emit_provider_request_error(provider_request_error_ctx(1))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        decision,
+        ProviderRequestErrorResult::Retry {
+            delay_ms: Some(1_000),
+            reason: "first".into(),
+        }
+    );
+    assert_eq!(first_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(second_calls.load(Ordering::SeqCst), 0);
 }

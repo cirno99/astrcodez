@@ -21,16 +21,17 @@ use super::{
     ExtensionHttpRoute, ExtensionPaths, ExtensionStartContext, ExtensionStopContext,
     ExtensionTasks, HookContext, HttpContext, LifecyclePayload, PostCompactPayload,
     PostToolUsePayload, PreCompactPayload, PreToolUsePayload, PromptBuildPayload,
-    ProviderContributionId, ProviderPayload, ProviderRequestId, ProviderSettlementPayload,
-    StopReason, ToolContext, ToolDiscoveryContext, ToolPlanContext, UserMessageEnvelopePayload,
+    ProviderContributionId, ProviderPayload, ProviderRequestErrorKind, ProviderRequestErrorPayload,
+    ProviderRequestId, ProviderSettlementPayload, StopReason, ToolContext, ToolDiscoveryContext,
+    ToolPlanContext, UserMessageEnvelopePayload,
 };
 pub use super::{
     hooks::{
         HookInput, RuntimeContinueAfterStopContext, RuntimeHookCallContext,
         RuntimeLifecycleContext, RuntimePostCompactContext, RuntimePostToolUseContext,
         RuntimePreCompactContext, RuntimePreToolUseContext, RuntimePromptBuildContext,
-        RuntimeProviderContext, RuntimeProviderSettlementContext,
-        RuntimeUserMessageEnvelopeContext,
+        RuntimeProviderContext, RuntimeProviderRequestErrorContext,
+        RuntimeProviderSettlementContext, RuntimeUserMessageEnvelopeContext,
     },
     registration_validation::{
         canonical_registration_name, canonicalize_command_name, custom_event_subscription_matches,
@@ -263,6 +264,24 @@ pub fn runtime_provider_context(
     messages: Vec<std::sync::Arc<LlmMessage>>,
 ) -> RuntimeProviderContext {
     HookInput::new(call, ProviderPayload::new(request_id, messages))
+}
+
+pub fn runtime_provider_request_error_context(
+    call: RuntimeHookCallContext,
+    model_id: impl Into<String>,
+    attempt: u32,
+    error_kind: ProviderRequestErrorKind,
+    error_message: impl Into<String>,
+) -> RuntimeProviderRequestErrorContext {
+    HookInput::new(
+        call,
+        ProviderRequestErrorPayload::new(
+            model_id.into(),
+            attempt,
+            error_kind,
+            error_message.into(),
+        ),
+    )
 }
 
 pub fn runtime_provider_settlement_context(

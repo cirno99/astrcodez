@@ -4,7 +4,7 @@
 //! 分发扩展钩子事件，并将事件流式传输给客户端。
 //! Agent 是无状态的短暂对象，处理完一个回合后即被丢弃。
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use astrcode_context::{
     token_budget::{PromptTokenSnapshot, compact_threshold_tokens, request_max_output_tokens},
@@ -20,10 +20,12 @@ use astrcode_core::{
     types::*,
 };
 use astrcode_extension_sdk::extension::{
-    ContinueAfterStopResult, LifecycleEvent, ProviderEvent, ProviderRequestId, ProviderResult,
+    ContinueAfterStopResult, LifecycleEvent, ProviderEvent, ProviderRequestErrorKind,
+    ProviderRequestErrorResult, ProviderRequestId, ProviderResult,
     internal::{
         RuntimeLifecycleContext, runtime_continue_after_stop_context,
-        runtime_lifecycle_for_step_start, runtime_provider_settlement_context,
+        runtime_lifecycle_for_step_start, runtime_provider_request_error_context,
+        runtime_provider_settlement_context,
     },
 };
 use tokio::sync::mpsc;
@@ -85,6 +87,8 @@ struct StepHooks<'a> {
 const FROZEN_INPUT_TOKENS_STREAK_WARN: u32 = 3;
 /// 模型因输出额度耗尽而结束时 provider 返回的 finish_reason。
 const FINISH_REASON_LENGTH: &str = "length";
+/// `provider_request_error` 建议延迟的 host 上限：`delay_ms` 只是建议，调度权归 host。
+const MAX_HOOK_RETRY_DELAY: Duration = Duration::from_secs(30);
 
 /// LLM 请求被消费前抓取的快照，供 outcome 后续阶段使用。
 struct LlmRequestSnapshot {
@@ -343,16 +347,20 @@ impl TurnLoop {
             context_window: prepared.llm.model_limits().max_input_tokens,
             acknowledgements: prepared.acknowledgements.clone(),
         };
-        let outcome =
-            match timed_stage("llm", self.llm_stage(prepared, &visible_tools, publisher)).await {
-                Ok(outcome) => outcome,
-                Err(TurnError::Llm(LlmError::ContextWindowExceeded { .. })) => {
-                    return self
-                        .recover_or_fail(extension_runner, state, publisher)
-                        .await;
-                },
-                Err(error) => return Err(error),
-            };
+        let outcome = match timed_stage(
+            "llm",
+            self.llm_stage(extension_runner, prepared, &visible_tools, publisher),
+        )
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(TurnError::Llm(LlmError::ContextWindowExceeded { .. })) => {
+                return self
+                    .recover_or_fail(extension_runner, state, publisher)
+                    .await;
+            },
+            Err(error) => return Err(error),
+        };
 
         // 思考耗尽输出额度时 provider 以 length 结束且没有正文：此时没有任何可提交的
         // assistant 内容，必须清掉未完成的思考预览并走响应式压缩重试，否则用户拿到空回合。
@@ -617,19 +625,14 @@ impl TurnLoop {
 
     async fn llm_stage(
         &self,
+        extension_runner: &dyn astrcode_extension_sdk::runtime_ports::TurnHooks,
         prepared: PreparedProviderRequest,
         tools: &[ToolDefinition],
         publisher: &TurnEvents,
     ) -> Result<StreamOutcome, TurnError> {
         let request_messages = prepared.messages.clone();
         let rx = self
-            .start_provider_stream(
-                &prepared.llm,
-                prepared.messages,
-                tools,
-                prepared.max_output_tokens,
-                publisher,
-            )
+            .start_provider_stream(extension_runner, &prepared, tools, publisher)
             .await?;
         let message_id = new_message_id();
 
@@ -906,35 +909,93 @@ impl TurnLoop {
         Ok((messages, acknowledgements))
     }
 
+    /// 发起 provider 流，失败时先问 `provider_request_error` 是否重试。
+    ///
+    /// 只有通用错误臂咨询扩展：`ContextWindowExceeded` 走专属臂（已有响应式压缩恢复路径，
+    /// 不是瞬态错误），流中途错误也不在这里（重试会让已发布的 transcript 事件需要重放）。
+    /// 被 Retry 的尝试不写 durable 错误事件，只有最终 `Fail` 才落 `durable_error`。
     async fn start_provider_stream(
         &self,
-        llm: &Arc<dyn astrcode_core::llm::LlmProvider>,
-        send_messages: Vec<Arc<LlmMessage>>,
+        extension_runner: &dyn astrcode_extension_sdk::runtime_ports::TurnHooks,
+        prepared: &PreparedProviderRequest,
         tools: &[ToolDefinition],
-        max_output_tokens: usize,
         publisher: &TurnEvents,
     ) -> Result<mpsc::UnboundedReceiver<LlmEvent>, TurnError> {
-        let result = tokio::select! {
-            _ = self.cancellation_token.cancelled() => return Err(TurnError::Aborted),
-            result = llm.generate_request(
-                LlmRequest::new(send_messages, tools.to_vec())
-                    .with_max_output_tokens(max_output_tokens)
-            ) => result,
-        };
-        match result {
-            Ok(rx) => Ok(rx),
-            Err(LlmError::ContextWindowExceeded { message }) => {
-                Err(TurnError::Llm(LlmError::ContextWindowExceeded { message }))
+        let mut attempt = 1;
+        loop {
+            let result = tokio::select! {
+                _ = self.cancellation_token.cancelled() => return Err(TurnError::Aborted),
+                result = prepared.llm.generate_request(
+                    LlmRequest::new(prepared.messages.clone(), tools.to_vec())
+                        .with_max_output_tokens(prepared.max_output_tokens)
+                ) => result,
+            };
+            match result {
+                Ok(rx) => return Ok(rx),
+                Err(LlmError::ContextWindowExceeded { message }) => {
+                    return Err(TurnError::Llm(LlmError::ContextWindowExceeded { message }));
+                },
+                Err(error) => {
+                    let Some(delay) = self
+                        .provider_request_error_retry_delay(extension_runner, attempt, &error)
+                        .await
+                    else {
+                        publisher
+                            .durable_error(
+                                crate::payload::JSON_RPC_INTERNAL_ERROR,
+                                error.to_string(),
+                                false,
+                            )
+                            .await?;
+                        return end_turn_with_error_typed(error);
+                    };
+                    attempt += 1;
+                    if !delay.is_zero() {
+                        tokio::select! {
+                            _ = self.cancellation_token.cancelled() => {
+                                return Err(TurnError::Aborted);
+                            },
+                            () = tokio::time::sleep(delay) => {},
+                        }
+                    }
+                },
+            }
+        }
+    }
+
+    /// 询问扩展是否重试一次失败的 provider 请求；`None` 表示维持失败语义。
+    ///
+    /// hook 自身的失败（handler 报错、超时、扩展 generation 已失效）不得掩盖原始 provider
+    /// 错误，因此这里降级为 `None`，由调用方按原有失败路径收尾。
+    async fn provider_request_error_retry_delay(
+        &self,
+        extension_runner: &dyn astrcode_extension_sdk::runtime_ports::TurnHooks,
+        attempt: u32,
+        error: &LlmError,
+    ) -> Option<Duration> {
+        let ctx = runtime_provider_request_error_context(
+            self.shared().hook_call_context(),
+            self.shared().model_selection().model,
+            attempt,
+            provider_request_error_kind(error),
+            error.to_string(),
+        );
+        match extension_runner.emit_provider_request_error(ctx).await {
+            Ok(ProviderRequestErrorResult::Fail) => None,
+            Ok(ProviderRequestErrorResult::Retry { delay_ms, reason }) => {
+                tracing::debug!(
+                    attempt,
+                    reason,
+                    "provider_request_error: extension requested a retry"
+                );
+                Some(clamp_hook_retry_delay(delay_ms))
             },
-            Err(e) => {
-                publisher
-                    .durable_error(
-                        crate::payload::JSON_RPC_INTERNAL_ERROR,
-                        e.to_string(),
-                        false,
-                    )
-                    .await?;
-                end_turn_with_error_typed(e)
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "provider_request_error hook failed; keeping the provider failure"
+                );
+                None
             },
         }
     }
@@ -1075,6 +1136,23 @@ fn extract_text_from_messages(messages: &[LlmMessage]) -> String {
     LlmContent::join_text(messages.iter().flat_map(|message| &message.content), "")
 }
 
+/// 把 provider 错误映射成扩展可见的粗粒度种类。
+fn provider_request_error_kind(error: &LlmError) -> ProviderRequestErrorKind {
+    match error {
+        LlmError::RateLimited { .. } | LlmError::QuotaExceeded { .. } => {
+            ProviderRequestErrorKind::RateLimit
+        },
+        LlmError::ServerError { .. } => ProviderRequestErrorKind::Server,
+        LlmError::Transport { .. } => ProviderRequestErrorKind::Network,
+        _ => ProviderRequestErrorKind::Other,
+    }
+}
+
+/// 把扩展建议的重试延迟钳到 host 上限；`None` 表示立即重试。
+fn clamp_hook_retry_delay(delay_ms: Option<u64>) -> Duration {
+    Duration::from_millis(delay_ms.unwrap_or(0)).min(MAX_HOOK_RETRY_DELAY)
+}
+
 #[derive(Debug)]
 pub struct TurnOutput {
     pub text: String,
@@ -1137,5 +1215,59 @@ pub(crate) async fn run_turn(
             aborted,
             terminal_persisted: false,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hook_retry_delay_is_suggested_by_the_extension_and_capped_by_the_host() {
+        assert_eq!(clamp_hook_retry_delay(None), Duration::ZERO);
+        assert_eq!(
+            clamp_hook_retry_delay(Some(1_500)),
+            Duration::from_millis(1_500)
+        );
+        assert_eq!(clamp_hook_retry_delay(Some(u64::MAX)), MAX_HOOK_RETRY_DELAY);
+    }
+
+    #[test]
+    fn provider_errors_are_classified_for_extension_retry_policy() {
+        assert_eq!(
+            provider_request_error_kind(&LlmError::RateLimited {
+                status: 429,
+                retry_after_ms: None,
+                message: "slow down".into(),
+            }),
+            ProviderRequestErrorKind::RateLimit
+        );
+        assert_eq!(
+            provider_request_error_kind(&LlmError::QuotaExceeded {
+                status: 402,
+                message: "quota".into(),
+            }),
+            ProviderRequestErrorKind::RateLimit
+        );
+        assert_eq!(
+            provider_request_error_kind(&LlmError::ServerError {
+                status: 500,
+                message: "boom".into(),
+            }),
+            ProviderRequestErrorKind::Server
+        );
+        assert_eq!(
+            provider_request_error_kind(&LlmError::Transport {
+                message: "reset".into(),
+            }),
+            ProviderRequestErrorKind::Network
+        );
+        assert_eq!(
+            provider_request_error_kind(&LlmError::ClientError {
+                status: 400,
+                message: "bad".into(),
+            }),
+            ProviderRequestErrorKind::Other
+        );
     }
 }

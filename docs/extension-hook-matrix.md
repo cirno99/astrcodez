@@ -63,6 +63,7 @@ The runner rejects privileged registrations that omit their capability:
 | Post tool use | `on_post_tool_use*` | `PostToolUseContext` | `emit_post_tool_use` | Runs after a completed tool result, including semantic errors. Blocking handlers may replace visible content or block; observer results are ignored. |
 | Before provider request | `on_before_provider_request(mode, priority, handler)` | `ProviderContext` | `emit_provider(BeforeRequest, ...)` | Blocking handlers may replace/append messages or block only the current provider call. |
 | After provider response | `on_after_provider_response(priority, handler)` | `ProviderContext` | `emit_provider(AfterResponse, ...)` | Registrar fixes the mode to Advisory. The handler observes the completed response; returned block/message mutations are discarded and cannot rewrite turn output. |
+| Provider request error | `on_provider_request_error(priority, max_retries, handler)` | `ProviderRequestErrorContext` | `emit_provider_request_error` | Blocking-only decision hook after a provider request fails before its stream starts. `Fail` vetoes and short-circuits; otherwise the first `Retry` in priority order wins. `max_retries` is the handler's per-request retry budget and is capped at `MAX_PROVIDER_REQUEST_ERROR_RETRIES`. |
 | Compact | `on_compact(event, priority, handler)` | `CompactContext` | `emit_compact` | Pre-compact may block or contribute instructions; post-compact is notification/contribution collection. |
 | Continue after stop | `on_continue_after_stop(priority, options, handler)` | `ContinueAfterStopContext` | `emit_continue_after_stop` | Blocking-only decision hook. First `ContinueOneStep` wins; `options.max_per_turn` may limit a handler and defaults to unlimited. |
 | User-message envelope | `on_user_message_envelope(priority, handler)` | `UserMessageEnvelopeContext` | `emit_user_message_envelope` | Blocking-only typed hook before durable transcript write. Handlers may replace, append, or block text. |
@@ -86,12 +87,14 @@ failure and continue the remaining cleanup.
 ## Decision Hooks
 
 Decision hooks do not accept `HookMode`; their registration API encodes that the host must await
-them before it can progress. AstrCode has two typed decision hooks:
-`continue_after_stop` and `user_message_envelope`.
+them before it can progress. AstrCode has three typed decision hooks:
+`continue_after_stop`, `user_message_envelope`, and `provider_request_error`.
 
 `ContinueAfterStopOptions::limited(n)` asks the host to skip that handler after `n` automatic
 continuations in the same turn. `ContinueAfterStopOptions::unlimited()` and the default apply no
-host limit.
+host limit. `on_provider_request_error` uses the same registration-time budget shape: the host skips
+a handler once the current provider request has already been attempted `max_retries` retries, so
+`max_retries = 0` registers a handler that never runs.
 
 ## Provider Scope
 
@@ -123,7 +126,9 @@ families use typed authoring methods and emit exactly one valid wire mode:
 
 The manifest normalization boundary rejects every other event/mode combination, including Blocking
 on observe-only lifecycle events. `user_message_envelope` remains unavailable to S5R workers until
-the wire protocol has a typed input/output adapter for it.
+the wire protocol has a typed input/output adapter for it. `provider_request_error` is also
+in-process only for now: its retry decision has no wire representation yet, so bundled Rust
+extensions may register it while S5R workers cannot.
 
 Every S5R manifest hook may declare an optional `priority` (non-negative integer, default `0`;
 negative values are rejected at the manifest normalization boundary). The host dispatches hooks in

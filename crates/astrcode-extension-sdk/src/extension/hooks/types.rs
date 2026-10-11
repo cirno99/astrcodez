@@ -67,6 +67,24 @@ pub struct UserMessageEnvelopeRegistration<H: ?Sized> {
     pub handler: Arc<H>,
 }
 
+/// `provider_request_error` 单个 handler 可声明的重试预算上限。
+///
+/// 重试延迟由 host 钳制在 30s 内，3 次即「最坏多等 90s」的可用性边界；hook 看到错误前
+/// provider 内部的 HTTP/传输重试已用掉 5 次尝试，这里只补最后的恢复机会。
+pub const MAX_PROVIDER_REQUEST_ERROR_RETRIES: u32 = 3;
+
+/// `provider_request_error` 注册项。
+///
+/// `max_retries` 是注册期声明的重试预算（0 表示不重试），host 按本 turn 内已发生的尝试次数
+/// 判定，超预算即把该 handler 的 `Retry` 降级为 `Fail`——注册期声明而非运行时协商，是为了
+/// 让「一个扩展最多能拖住多少次请求」在 manifest 里可审计。
+#[derive(Clone)]
+pub struct ProviderRequestErrorRegistration<H: ?Sized> {
+    pub priority: i32,
+    pub max_retries: u32,
+    pub handler: Arc<H>,
+}
+
 // ─── Contribution types ────────────────────────────────────────────────
 
 /// Prompt contributions provided by an extension in the PromptBuild hook.
@@ -123,6 +141,22 @@ impl CompactContributions {
 pub enum ProviderEvent {
     BeforeRequest,
     AfterResponse,
+}
+
+/// 供应商请求失败的粗分类。
+///
+/// `provider_request_error` 的 handler 用它判断一次失败是否值得重试；分类粒度只到
+/// 「调用方能否据此决策」，不镜像 provider 的具体状态码。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProviderRequestErrorKind {
+    /// 触发速率限制（429）。
+    RateLimit,
+    /// provider 端故障（5xx）。
+    Server,
+    /// 连接层失败（DNS、TLS、连接重置）。
+    Network,
+    /// 其他失败（含 408 超时与 4xx 客户端错误）；handler 应把它当作不可重试。
+    Other,
 }
 
 /// Host identity for one concrete provider request attempt.

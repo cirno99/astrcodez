@@ -5,12 +5,12 @@ use astrcode_core::tool::{SessionOperations, Tool};
 use crate::extension::{
     ContinueAfterStopResult, ExtensionError, LifecycleEvent, PostToolUseResult, PreCompactResult,
     PreToolUseAdmission, PromptContributions, ProviderContributionHandler, ProviderContributionId,
-    ProviderEvent, ProviderResult, UserMessageEnvelopeResult,
+    ProviderEvent, ProviderRequestErrorResult, ProviderResult, UserMessageEnvelopeResult,
     internal::{
         RuntimeContinueAfterStopContext, RuntimeLifecycleContext, RuntimePostCompactContext,
         RuntimePostToolUseContext, RuntimePreCompactContext, RuntimePreToolUseContext,
-        RuntimePromptBuildContext, RuntimeProviderContext, RuntimeProviderSettlementContext,
-        RuntimeUserMessageEnvelopeContext,
+        RuntimePromptBuildContext, RuntimeProviderContext, RuntimeProviderRequestErrorContext,
+        RuntimeProviderSettlementContext, RuntimeUserMessageEnvelopeContext,
     },
 };
 
@@ -229,6 +229,16 @@ pub trait TurnHooks: Send + Sync {
         _acknowledgements: ProviderRequestAcknowledgements,
     ) -> Result<(), ExtensionError> {
         Ok(())
+    }
+
+    /// 让扩展决定一次失败的 provider 请求是否重试。
+    ///
+    /// 默认返回 `Fail`，与「无 handler 参与」的聚合结果一致，即维持既有失败语义。
+    async fn emit_provider_request_error(
+        &self,
+        _ctx: RuntimeProviderRequestErrorContext,
+    ) -> Result<ProviderRequestErrorResult, ExtensionError> {
+        Ok(ProviderRequestErrorResult::Fail)
     }
 
     async fn collect_pre_compact(

@@ -18,12 +18,12 @@ use astrcode_extension_sdk::{
             RuntimeContinueAfterStopContext, RuntimeHookCallContext, RuntimeLifecycleContext,
             RuntimePostCompactContext, RuntimePostToolUseContext, RuntimePreCompactContext,
             RuntimePreToolUseContext, RuntimePromptBuildContext, RuntimeProviderContext,
-            RuntimeProviderSettlementContext, RuntimeUserMessageEnvelopeContext,
-            activate_extension_tasks, append_provider_messages, append_user_message_text,
-            author_hook_context, author_provider_settlement_context, extension_config,
-            extension_start_context, replace_post_tool_result, replace_pre_tool_input,
-            replace_provider_messages, replace_user_message_text, retain_call_cancellation,
-            suspended_extension_tasks,
+            RuntimeProviderRequestErrorContext, RuntimeProviderSettlementContext,
+            RuntimeUserMessageEnvelopeContext, activate_extension_tasks, append_provider_messages,
+            append_user_message_text, author_hook_context, author_provider_settlement_context,
+            extension_config, extension_start_context, replace_post_tool_result,
+            replace_pre_tool_input, replace_provider_messages, replace_user_message_text,
+            retain_call_cancellation, suspended_extension_tasks,
         },
         *,
     },
@@ -2035,6 +2035,55 @@ impl ExtensionView {
         }
     }
 
+    /// `provider_request_error` 分发：按 priority 降序取第一个非 `Fail` 的决策。
+    ///
+    /// 预算判定先于派发，与 [`Self::emit_continue_after_stop`] 同形：`max_retries` 用尽的
+    /// handler 不再参与（`attempt` 从 1 起，故 `max_retries == 0` 的注册一次都不会被调用），
+    /// 而不是让低优先级 handler 反向接管高优先级的重试策略。`Fail` 一票否决并立即短路，
+    /// 与 [`Self::emit_pre_tool_use`] 的 any-Block-wins 同形。
+    pub async fn emit_provider_request_error(
+        &self,
+        ctx: RuntimeProviderRequestErrorContext,
+    ) -> Result<ProviderRequestErrorResult, ExtensionError> {
+        let index = &self.index;
+        let attempt = ctx.attempt();
+        for (extension_id, max_retries, handler) in &index.provider_request_error {
+            if attempt > *max_retries {
+                tracing::debug!(
+                    extension_id = %extension_id,
+                    attempt,
+                    max_retries,
+                    "provider_request_error: retry budget exhausted"
+                );
+                continue;
+            }
+            let (call, cancellation) = self.make_hook_call_context(extension_id, ctx.call())?;
+            let handler_ctx = author_hook_context(call, &ctx);
+            match self
+                .run_recorded_hook(
+                    extension_id,
+                    "provider_request_error",
+                    cancellation,
+                    handler.handle(handler_ctx),
+                )
+                .await?
+            {
+                ProviderRequestErrorResult::Fail => {
+                    return Ok(ProviderRequestErrorResult::Fail);
+                },
+                retry @ ProviderRequestErrorResult::Retry { .. } => {
+                    tracing::debug!(
+                        extension_id = %extension_id,
+                        attempt,
+                        "provider_request_error: extension requested a retry"
+                    );
+                    return Ok(retry);
+                },
+            }
+        }
+        Ok(ProviderRequestErrorResult::Fail)
+    }
+
     /// PromptBuild 贡献收集。
     pub async fn collect_prompt_contributions_typed(
         &self,
@@ -2330,6 +2379,17 @@ impl ExtensionRunner {
     }
 
     #[cfg(any(test, feature = "testing"))]
+    pub async fn emit_provider_request_error(
+        &self,
+        ctx: RuntimeProviderRequestErrorContext,
+    ) -> Result<ProviderRequestErrorResult, ExtensionError> {
+        self.extension_view()
+            .await
+            .emit_provider_request_error(ctx)
+            .await
+    }
+
+    #[cfg(any(test, feature = "testing"))]
     pub async fn collect_pre_compact(
         &self,
         ctx: RuntimePreCompactContext,
@@ -2436,6 +2496,13 @@ impl TurnHooks for ExtensionView {
         acknowledgements: ProviderRequestAcknowledgements,
     ) -> Result<(), ExtensionError> {
         ExtensionView::acknowledge_provider_request(self, ctx, acknowledgements).await
+    }
+
+    async fn emit_provider_request_error(
+        &self,
+        ctx: RuntimeProviderRequestErrorContext,
+    ) -> Result<ProviderRequestErrorResult, ExtensionError> {
+        ExtensionView::emit_provider_request_error(self, ctx).await
     }
 
     async fn collect_pre_compact(

@@ -8,9 +8,10 @@ use super::{
     ContinueAfterStopOptions, ContinueAfterStopRegistration, CustomEventDeclaration,
     CustomEventHandler, CustomEventSubscription, ExtensionCapability, ExtensionHttpAccess,
     ExtensionHttpHandler, ExtensionHttpRoute, ExtensionHttpRouteRegistration, ExtensionManifest,
-    HookMode, LifecycleEvent, LifecycleHandler, MAX_CUSTOM_EVENT_PAYLOAD_BYTES, PostCompactHandler,
-    PostToolUseHandler, PreCompactHandler, PreToolUseHandler, PromptBuildHandler,
-    ProviderContributionHandler, ProviderEvent, ProviderHandler, SlashCommand,
+    HookMode, LifecycleEvent, LifecycleHandler, MAX_CUSTOM_EVENT_PAYLOAD_BYTES,
+    MAX_PROVIDER_REQUEST_ERROR_RETRIES, PostCompactHandler, PostToolUseHandler, PreCompactHandler,
+    PreToolUseHandler, PromptBuildHandler, ProviderContributionHandler, ProviderEvent,
+    ProviderHandler, ProviderRequestErrorHandler, ProviderRequestErrorRegistration, SlashCommand,
     ToolDiscoveryHandler, ToolHandler, ToolHookRegistration, ToolHookTarget,
     ToolInputTransformHandler, ToolUseRegistration, UserMessageEnvelopeHandler,
     UserMessageEnvelopeRegistration,
@@ -66,6 +67,7 @@ pub struct ExtensionRegistrations {
     post_tool_use: Vec<ToolHookRegistration<dyn PostToolUseHandler>>,
     provider: Vec<(ProviderEvent, HookMode, i32, Arc<dyn ProviderHandler>)>,
     provider_contributions: Vec<(i32, Arc<dyn ProviderContributionHandler>)>,
+    provider_request_error: Vec<ProviderRequestErrorRegistration<dyn ProviderRequestErrorHandler>>,
     prompt_build: Vec<(i32, Arc<dyn PromptBuildHandler>)>,
     pre_compact: Vec<(i32, Arc<dyn PreCompactHandler>)>,
     post_compact: Vec<(i32, Arc<dyn PostCompactHandler>)>,
@@ -319,6 +321,26 @@ impl Registrar {
             .push((priority, handler));
     }
 
+    /// 注册 `provider_request_error` handler：在 provider 请求失败后决定是否重试。
+    ///
+    /// `max_retries` 是本 handler 每 turn 可消耗的重试预算（0 表示不重试），注册期拒绝超过
+    /// [`MAX_PROVIDER_REQUEST_ERROR_RETRIES`] 的值。本 hook 天然 Blocking：重试决策必须在 turn
+    /// 判定请求失败之前拿到，没有即发即弃的语义。
+    pub fn on_provider_request_error(
+        &mut self,
+        priority: i32,
+        max_retries: u32,
+        handler: Arc<dyn ProviderRequestErrorHandler>,
+    ) {
+        self.registrations
+            .provider_request_error
+            .push(ProviderRequestErrorRegistration {
+                priority,
+                max_retries,
+                handler,
+            });
+    }
+
     pub fn on_prompt_build(&mut self, priority: i32, handler: Arc<dyn PromptBuildHandler>) {
         self.registrations.prompt_build.push((priority, handler));
     }
@@ -434,6 +456,12 @@ impl ExtensionRegistrations {
         &self.provider_contributions
     }
 
+    pub fn provider_request_error(
+        &self,
+    ) -> &[ProviderRequestErrorRegistration<dyn ProviderRequestErrorHandler>] {
+        &self.provider_request_error
+    }
+
     pub fn prompt_build(&self) -> &[(i32, Arc<dyn PromptBuildHandler>)] {
         &self.prompt_build
     }
@@ -527,7 +555,9 @@ impl ExtensionRegistrations {
         require_capability(
             extension_id,
             capabilities,
-            !self.provider.is_empty() || !self.provider_contributions.is_empty(),
+            !self.provider.is_empty()
+                || !self.provider_contributions.is_empty()
+                || !self.provider_request_error.is_empty(),
             "provider",
             ExtensionCapability::ProviderRequest,
         )?;
@@ -563,6 +593,19 @@ impl ExtensionRegistrations {
             "command",
             ExtensionCapability::SessionCommand,
         )?;
+
+        for registration in &self.provider_request_error {
+            if registration.max_retries > MAX_PROVIDER_REQUEST_ERROR_RETRIES {
+                return Err(invalid_registration(
+                    extension_id,
+                    format!(
+                        "provider_request_error max_retries {} exceeds the \
+                         {MAX_PROVIDER_REQUEST_ERROR_RETRIES} per-turn budget",
+                        registration.max_retries
+                    ),
+                ));
+            }
+        }
 
         for (event, mode, _, _) in &self.lifecycle {
             if *mode == HookMode::Blocking && !lifecycle_event_allows_blocking(event) {

@@ -15,6 +15,7 @@ pub(super) type ExtensionHandler<H> = (String, HookMode, Arc<H>);
 pub(super) type ToolExtensionHandler<H> = (String, HookMode, ToolHookTarget, Arc<H>);
 pub(super) type ToolUseExtensionHandler<H> = (String, ToolHookTarget, Arc<H>);
 type ContinueAfterStopExtensionHandler<H> = (String, ContinueAfterStopOptions, Arc<H>);
+pub(super) type ProviderRequestErrorExtensionHandler<H> = (String, u32, Arc<H>);
 pub(super) type SimpleExtensionHandler<H> = (String, Arc<H>);
 type CustomEventExtensionHandler = (String, CustomEventSubscription, Arc<dyn CustomEventHandler>);
 type Prioritized<T> = (i32, T);
@@ -65,6 +66,8 @@ pub(super) struct HandlerIndex {
     pub(super) post_tool_use: Vec<ToolExtensionHandler<dyn PostToolUseHandler>>,
     pub(super) provider: HashMap<ProviderEvent, Vec<ExtensionHandler<dyn ProviderHandler>>>,
     pub(super) provider_contributions: Vec<SimpleExtensionHandler<dyn ProviderContributionHandler>>,
+    pub(super) provider_request_error:
+        Vec<ProviderRequestErrorExtensionHandler<dyn ProviderRequestErrorHandler>>,
     pub(super) prompt_build: Vec<SimpleExtensionHandler<dyn PromptBuildHandler>>,
     pub(super) pre_compact: Vec<SimpleExtensionHandler<dyn PreCompactHandler>>,
     pub(super) post_compact: Vec<SimpleExtensionHandler<dyn PostCompactHandler>>,
@@ -95,6 +98,7 @@ pub(super) fn build_handler_index<'a>(
     let mut post_tool_use = Vec::new();
     let mut provider = Vec::new();
     let mut provider_contributions = Vec::new();
+    let mut provider_request_error = Vec::new();
     let mut prompt_build = Vec::new();
     let mut pre_compact = Vec::new();
     let mut post_compact = Vec::new();
@@ -178,6 +182,16 @@ pub(super) fn build_handler_index<'a>(
         }
         for (priority, handler) in registrations.provider_contributions() {
             provider_contributions.push((*priority, (extension_id.clone(), Arc::clone(handler))));
+        }
+        for registration in registrations.provider_request_error() {
+            provider_request_error.push((
+                registration.priority,
+                (
+                    extension_id.clone(),
+                    registration.max_retries,
+                    Arc::clone(&registration.handler),
+                ),
+            ));
         }
         for (priority, handler) in registrations.prompt_build() {
             prompt_build.push((*priority, (extension_id.clone(), Arc::clone(handler))));
@@ -268,6 +282,7 @@ pub(super) fn build_handler_index<'a>(
         post_tool_use: handlers_by_priority(post_tool_use),
         provider: handlers_by_event(provider),
         provider_contributions: handlers_by_priority(provider_contributions),
+        provider_request_error: handlers_by_priority(provider_request_error),
         prompt_build: handlers_by_priority(prompt_build),
         pre_compact: handlers_by_priority(pre_compact),
         post_compact: handlers_by_priority(post_compact),
@@ -319,6 +334,7 @@ pub(super) fn log_handler_dispatch_order(extensions: &[HostedExtension]) {
     let mut pre: Vec<(&str, i32, ToolHookTarget)> = Vec::new();
     let mut post: Vec<(&str, i32, HookMode, ToolHookTarget)> = Vec::new();
     let mut provider: Vec<(&str, ProviderEvent, i32, HookMode)> = Vec::new();
+    let mut provider_request_error: Vec<(&str, i32, u32)> = Vec::new();
     let mut prompt: Vec<(&str, i32)> = Vec::new();
     let mut pre_compact: Vec<(&str, i32)> = Vec::new();
     let mut post_compact: Vec<(&str, i32)> = Vec::new();
@@ -348,6 +364,9 @@ pub(super) fn log_handler_dispatch_order(extensions: &[HostedExtension]) {
         for (event, mode, priority, _) in registrations.provider() {
             provider.push((id, *event, *priority, *mode));
         }
+        for registration in registrations.provider_request_error() {
+            provider_request_error.push((id, registration.priority, registration.max_retries));
+        }
         for (priority, _) in registrations.prompt_build() {
             prompt.push((id, *priority));
         }
@@ -366,6 +385,7 @@ pub(super) fn log_handler_dispatch_order(extensions: &[HostedExtension]) {
     pre.sort_by_key(|x| std::cmp::Reverse(x.1));
     post.sort_by_key(|x| std::cmp::Reverse(x.1));
     provider.sort_by_key(|x| std::cmp::Reverse(x.2));
+    provider_request_error.sort_by_key(|x| std::cmp::Reverse(x.1));
     prompt.sort_by_key(|x| std::cmp::Reverse(x.1));
     pre_compact.sort_by_key(|x| std::cmp::Reverse(x.1));
     post_compact.sort_by_key(|x| std::cmp::Reverse(x.1));
@@ -382,6 +402,9 @@ pub(super) fn log_handler_dispatch_order(extensions: &[HostedExtension]) {
     }
     if !provider.is_empty() {
         tracing::debug!(target: "astrcode_extensions", order = ?provider, "provider dispatch order");
+    }
+    if !provider_request_error.is_empty() {
+        tracing::debug!(target: "astrcode_extensions", order = ?provider_request_error, "provider_request_error dispatch order");
     }
     if !prompt.is_empty() {
         tracing::debug!(target: "astrcode_extensions", order = ?prompt, "prompt_build dispatch order");

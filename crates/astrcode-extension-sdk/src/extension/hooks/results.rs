@@ -112,6 +112,22 @@ pub enum ProviderResult {
     },
 }
 
+/// `provider_request_error` 的决定：provider 请求在流开始之前失败之后，是否重试。
+///
+/// 单个 handler 的结果形态即聚合结果形态（`Fail` 一票否决，否则取最高优先级的 `Retry`），
+/// 因此不另立一个形状完全相同的聚合枚举。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderRequestErrorResult {
+    /// 默认：维持现有失败语义。
+    Fail,
+    /// 建议重试；`delay_ms` 是建议而非承诺，host 会钳制并叠加抖动。
+    Retry {
+        delay_ms: Option<u64>,
+        reason: String,
+    },
+}
+
+
 /// PreCompact hook result.
 #[derive(Debug, Clone)]
 pub enum PreCompactResult {

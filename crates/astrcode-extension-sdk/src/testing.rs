@@ -18,13 +18,14 @@ use crate::{
         LifecycleContext, LifecyclePayload, PostCompactContext, PostCompactPayload,
         PostToolUseContext, PostToolUsePayload, PreCompactContext, PreCompactPayload,
         PreToolUseContext, PreToolUsePayload, PromptBuildContext, PromptBuildPayload,
-        ProviderContext, ProviderPayload, ProviderRequestId, SessionCallContext, ToolContext,
+        ProviderContext, ProviderPayload, ProviderRequestErrorContext, ProviderRequestErrorKind,
+        ProviderRequestErrorPayload, ProviderRequestId, SessionCallContext, ToolContext,
         UserMessageEnvelopeContext, UserMessageEnvelopePayload,
         internal::{
             RuntimeContinueAfterStopContext, RuntimeHookCallContext, RuntimeLifecycleContext,
             RuntimePostCompactContext, RuntimePostToolUseContext, RuntimePreCompactContext,
             RuntimePreToolUseContext, RuntimePromptBuildContext, RuntimeProviderContext,
-            RuntimeUserMessageEnvelopeContext,
+            RuntimeProviderRequestErrorContext, RuntimeUserMessageEnvelopeContext,
         },
     },
     host::{
@@ -383,6 +384,26 @@ impl HookContextBuilder {
             ),
         );
         ProviderContext::from_runtime(call, &input)
+    }
+
+    pub fn build_provider_request_error(
+        self,
+        model_id: impl Into<String>,
+        attempt: u32,
+        error_kind: ProviderRequestErrorKind,
+        error_message: impl Into<String>,
+    ) -> ProviderRequestErrorContext {
+        let (call, runtime_call) = self.into_parts();
+        let input = RuntimeProviderRequestErrorContext::new(
+            runtime_call,
+            ProviderRequestErrorPayload::new(
+                model_id.into(),
+                attempt,
+                error_kind,
+                error_message.into(),
+            ),
+        );
+        ProviderRequestErrorContext::from_runtime(call, &input)
     }
 
     pub fn build_prompt(self, tools: Vec<ToolDefinition>) -> PromptBuildContext {
