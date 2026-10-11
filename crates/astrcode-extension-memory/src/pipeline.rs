@@ -4,6 +4,7 @@ use astrcode_extension_sdk::{
     extension::ExtensionError,
     host::{ModelClient, SessionInspectClient},
     llm::{LlmContent, LlmMessage, LlmRole},
+    text::truncate_bytes_head,
     wire::session_inspect::{
         SessionInspectContent, SessionInspectListItem, SessionInspectReadModel,
     },
@@ -117,10 +118,7 @@ fn format_existing_memories(
     if combined.len() <= max_chars {
         return Ok(combined);
     }
-    Ok(format!(
-        "{}…",
-        crate::store::truncate_to_char_boundary(&combined, max_chars)
-    ))
+    Ok(format!("{}…", truncate_bytes_head(&combined, max_chars)))
 }
 
 async fn find_changed_candidates(

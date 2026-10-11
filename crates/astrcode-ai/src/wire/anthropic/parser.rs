@@ -5,12 +5,15 @@
 //! [`crate::common::DoneOnce`] 与 [`crate::common::TextDeltaAccumulator`]，
 //! 与 OpenAI parser 共享同一实现。
 
-use astrcode_core::llm::{LlmEvent, LlmTokenUsage, LlmTokenUsageSource};
+use astrcode_core::{
+    llm::{LlmEvent, LlmTokenUsage, LlmTokenUsageSource},
+    text::truncate_bytes_head,
+};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use tokio::sync::mpsc;
 
 use crate::{
-    common::{DoneOnce, TextDeltaAccumulator, send_event, token_usage_has_value, utf8_prefix},
+    common::{DoneOnce, TextDeltaAccumulator, send_event, token_usage_has_value},
     wire::is_transient_stream_error,
 };
 
@@ -391,7 +394,7 @@ pub(crate) fn process_sse_line(
                  {error}",
                 current_event_type,
                 data.len(),
-                utf8_prefix(data, 80)
+                truncate_bytes_head(data, 80)
             );
         },
     }

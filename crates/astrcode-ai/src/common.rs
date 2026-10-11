@@ -13,6 +13,7 @@ use std::{
 use astrcode_core::{
     config::ProviderAuthScheme,
     llm::{LlmClientConfig, LlmError, LlmEvent, LlmTokenUsage},
+    text::truncate_bytes_head,
 };
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
@@ -33,14 +34,6 @@ pub(crate) fn token_usage_has_value(usage: &LlmTokenUsage) -> bool {
         || usage.output_tokens.is_some()
         || usage.reasoning_output_tokens.is_some()
         || usage.total_tokens.is_some()
-}
-
-pub(crate) fn utf8_prefix(value: &str, max_bytes: usize) -> &str {
-    let mut end = value.len().min(max_bytes);
-    while !value.is_char_boundary(end) {
-        end -= 1;
-    }
-    &value[..end]
 }
 
 /// 根据 `LlmClientConfig` 构建 reqwest client。
@@ -544,7 +537,7 @@ impl SseStreamSummary {
                  Content-Type: {}, bytes: {}, preview: {}",
                 self.content_type.as_deref().unwrap_or("<missing>"),
                 self.bytes_read,
-                utf8_prefix(&self.body_preview, 256),
+                truncate_bytes_head(&self.body_preview, 256),
             )));
         }
         Ok(())
@@ -912,13 +905,6 @@ mod tests {
             matches!(events.as_slice(), [LlmEvent::Done { finish_reason }] if finish_reason == "stop"),
             "unexpected events: {events:?}"
         );
-    }
-
-    #[test]
-    fn utf8_prefix_respects_byte_limits_and_character_boundaries() {
-        assert_eq!(utf8_prefix("abc", 8), "abc");
-        assert_eq!(utf8_prefix("ab界", 4), "ab");
-        assert_eq!(utf8_prefix("界", 0), "");
     }
 
     #[test]

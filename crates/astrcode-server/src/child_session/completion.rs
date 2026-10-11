@@ -1,6 +1,9 @@
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use astrcode_core::types::{SessionId, TurnId};
+use astrcode_core::{
+    text::truncate_bytes_tail,
+    types::{SessionId, TurnId},
+};
 use astrcode_session::{TurnError, TurnHandle, TurnShutdownHandle};
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -232,12 +235,13 @@ pub(super) async fn build_background_agent_notification(
     let outcome = guard.outcome().await;
     let (status, error, output_body, output_truncated) = match &outcome {
         ChildOutcome::Completed { output } => {
-            let (body, truncated) = truncate_notification_output(output);
+            let (body, truncated) =
+                truncate_bytes_tail(output, AGENT_NOTIFICATION_OUTPUT_MAX_BYTES);
             ("completed", None, body, truncated)
         },
-        ChildOutcome::Failed { error } => ("failed", Some(error.as_str()), String::new(), false),
-        ChildOutcome::Aborted => ("aborted", Some("aborted"), String::new(), false),
-        ChildOutcome::TimedOut => ("timed_out", Some("timed out"), String::new(), false),
+        ChildOutcome::Failed { error } => ("failed", Some(error.as_str()), "", false),
+        ChildOutcome::Aborted => ("aborted", Some("aborted"), "", false),
+        ChildOutcome::TimedOut => ("timed_out", Some("timed out"), "", false),
     };
     format_background_agent_notification(
         guard.child_session_id().as_str(),
@@ -245,7 +249,7 @@ pub(super) async fn build_background_agent_notification(
         status,
         error,
         guard.summary_hint(),
-        &output_body,
+        output_body,
         output_truncated,
     )
 }
@@ -307,18 +311,6 @@ fn format_background_agent_notification(
         error_line = error_line,
         output_section = output_section,
         summary = summary,
-    )
-}
-
-fn truncate_notification_output(text: &str) -> (String, bool) {
-    let bytes = text.as_bytes();
-    let truncated = bytes.len() > AGENT_NOTIFICATION_OUTPUT_MAX_BYTES;
-    let start = bytes
-        .len()
-        .saturating_sub(AGENT_NOTIFICATION_OUTPUT_MAX_BYTES);
-    (
-        String::from_utf8_lossy(&bytes[start..]).into_owned(),
-        truncated,
     )
 }
 

@@ -6,7 +6,10 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use astrcode_core::tool::{FileObservation, FileObservationStore};
+use astrcode_core::{
+    text::{floor_char_boundary, truncate_chars},
+    tool::{FileObservation, FileObservationStore},
+};
 use astrcode_extension_sdk::{
     extension::{ExtensionCapability, ExtensionTasks},
     host::{
@@ -1312,10 +1315,7 @@ fn bounded_diff(mut diff: String) -> (String, bool) {
     }
 
     const SUFFIX: &str = "\n... (diff truncated)\n";
-    let mut prefix_bytes = HOST_WORKSPACE_MAX_DIFF_BYTES - SUFFIX.len();
-    while !diff.is_char_boundary(prefix_bytes) {
-        prefix_bytes -= 1;
-    }
+    let prefix_bytes = floor_char_boundary(&diff, HOST_WORKSPACE_MAX_DIFF_BYTES - SUFFIX.len());
     diff.truncate(prefix_bytes);
     diff.push_str(SUFFIX);
     (diff, true)
@@ -1707,13 +1707,6 @@ fn no_follow_options() -> std::fs::OpenOptions {
 #[cfg(not(unix))]
 fn no_follow_options() -> std::fs::OpenOptions {
     std::fs::OpenOptions::new()
-}
-
-fn truncate_chars(value: &str, max_chars: usize) -> (String, bool) {
-    let mut chars = value.chars();
-    let truncated: String = chars.by_ref().take(max_chars).collect();
-    let was_truncated = chars.next().is_some();
-    (truncated, was_truncated)
 }
 
 pub(super) fn remember_observation(

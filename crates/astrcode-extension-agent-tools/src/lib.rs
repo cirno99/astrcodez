@@ -17,6 +17,7 @@ use astrcode_extension_sdk::{
         PromptContributions, Registrar, ToolContext, ToolHandler, ToolPlanContext,
     },
     llm::{LlmContent, LlmMessage, LlmRole},
+    text::truncate_chars_with_marker,
     tool::{
         HostResource, ToolDefinition, ToolExecutionPolicy, ToolOrigin, ToolPlan,
         ToolPromptMetadata, ToolPromptTag, ToolResult, tool_metadata,
@@ -103,6 +104,9 @@ const AGENT_TOOL_DESCRIPTION: &str =
 
 const AGENT_TOOL_PARAMETERS: &str = r#"{"type":"object","properties":{"description":{"type":"string","description":"3-5 word task summary."},"prompt":{"type":"string","description":"Focused task packet: objective, scope, constraints, acceptance criteria, and known file/symbol anchors. Omit parent transcript and already-visible generic instructions."},"subagentType":{"type":"string","description":"Agent name from [Agents] section."},"waitForResult":{"type":"boolean","default":true,"description":"true: block until done. false: run in background, continue immediately."}},"required":["prompt","description"]}"#;
 const AGENT_TOOL_NAME: &str = "agent";
+
+/// 写进子 Agent 摘要的截断标记；字符数计入 1_200 的上限。
+const AGENT_RESULT_TRUNCATION_MARKER: &str = "\n\n[... agent result truncated]";
 
 fn agent_tool_definition() -> ToolDefinition {
     ToolDefinition {
@@ -347,7 +351,8 @@ fn agent_status(messages: &[LlmMessage]) -> Option<String> {
                         "completed"
                     };
                     let mut entry = format!("- {description}: {status}");
-                    let excerpt = truncate_agent_result(content, 1_200);
+                    let excerpt =
+                        truncate_chars_with_marker(content, 1_200, AGENT_RESULT_TRUNCATION_MARKER);
                     if !excerpt.is_empty() {
                         entry.push('\n');
                         entry.push_str(&excerpt);
@@ -361,15 +366,6 @@ fn agent_status(messages: &[LlmMessage]) -> Option<String> {
 
     let start = entries.len().saturating_sub(5);
     (!entries.is_empty()).then(|| entries[start..].join("\n\n"))
-}
-
-fn truncate_agent_result(content: &str, max_chars: usize) -> String {
-    if content.chars().count() <= max_chars {
-        return content.to_string();
-    }
-    let mut excerpt = content.chars().take(max_chars).collect::<String>();
-    excerpt.push_str("\n\n[... agent result truncated]");
-    excerpt
 }
 
 #[async_trait::async_trait]

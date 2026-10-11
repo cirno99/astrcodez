@@ -10,6 +10,7 @@ use astrcode_extension_sdk::{
         ModelClient, NetworkClient, llm_chat_request,
     },
     llm::{LlmContent, LlmMessage, LlmRole},
+    text::truncate_chars_with_marker,
 };
 use parking_lot::Mutex;
 use serde::Deserialize;
@@ -355,7 +356,11 @@ async fn finalize_result(input: FinalizeInput<'_>) -> Result<String, FetchError>
         )
     };
 
-    Ok(truncate_text(&result, input.max_output_chars))
+    Ok(truncate_chars_with_marker(
+        &result,
+        input.max_output_chars,
+        TRUNCATION_MARKER,
+    ))
 }
 
 async fn apply_prompt_to_markdown(
@@ -365,7 +370,8 @@ async fn apply_prompt_to_markdown(
     is_preapproved: bool,
     max_output_tokens: usize,
 ) -> Result<String, FetchError> {
-    let truncated = truncate_text(markdown, MAX_SUMMARIZER_INPUT_CHARS);
+    let truncated =
+        truncate_chars_with_marker(markdown, MAX_SUMMARIZER_INPUT_CHARS, TRUNCATION_MARKER);
     let user_prompt = make_secondary_model_prompt(&truncated, prompt, is_preapproved);
     let messages = vec![LlmMessage {
         role: LlmRole::User,
@@ -398,18 +404,6 @@ fn make_secondary_model_prompt(
     };
 
     format!("Web page content:\n---\n{markdown_content}\n---\n\n{prompt}\n\n{guidelines}")
-}
-
-fn truncate_text(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let marker_chars = TRUNCATION_MARKER.chars().count();
-    if max_chars <= marker_chars {
-        return text.chars().take(max_chars).collect();
-    }
-    let prefix: String = text.chars().take(max_chars - marker_chars).collect();
-    format!("{prefix}{TRUNCATION_MARKER}")
 }
 
 fn content_type(response: &HostNetworkResponse) -> String {
@@ -459,14 +453,14 @@ pub(crate) fn render_fetch_content(outcome: &FetchUrlOutcome, max_output_chars: 
         if outcome.cached { " (cache hit)" } else { "" },
         outcome.result
     );
-    truncate_text(&content, max_output_chars)
+    truncate_chars_with_marker(&content, max_output_chars, TRUNCATION_MARKER)
 }
 
 pub(crate) fn render_fetch_redirect(
     outcome: &FetchRedirectOutcome,
     max_output_chars: usize,
 ) -> String {
-    truncate_text(&outcome.message, max_output_chars)
+    truncate_chars_with_marker(&outcome.message, max_output_chars, TRUNCATION_MARKER)
 }
 
 #[cfg(test)]

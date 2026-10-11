@@ -4,7 +4,10 @@
 
 use std::borrow::Borrow;
 
-use astrcode_core::llm::{LlmMessage, ModelLimits};
+use astrcode_core::{
+    llm::{LlmMessage, ModelLimits},
+    text::truncate_chars_with_marker,
+};
 
 pub use crate::token_estimate::{
     estimate_message_tokens, estimate_request_tokens, estimate_text_tokens,
@@ -163,11 +166,7 @@ pub fn truncate_text_to_tokens(content: &str, max_tokens: usize, marker: &str) -
     if estimate_text_tokens(content) <= max_tokens {
         return content.to_string();
     }
-    let max_chars = estimate_char_budget(max_tokens);
-    let content_budget = max_chars.saturating_sub(marker.chars().count());
-    let mut truncated = content.chars().take(content_budget).collect::<String>();
-    truncated.push_str(marker);
-    truncated
+    truncate_chars_with_marker(content, estimate_char_budget(max_tokens), marker)
 }
 
 fn turn_token_totals<'a>(messages: impl IntoIterator<Item = &'a LlmMessage>) -> Vec<usize> {

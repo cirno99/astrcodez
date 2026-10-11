@@ -59,18 +59,6 @@ pub(crate) fn render(prompt: &RoundPrompt<'_>) -> String {
     text
 }
 
-/// 按字节上限截断，并回退到字符边界。
-pub(crate) fn truncate_to_char_boundary(text: &str, max_bytes: usize) -> &str {
-    if text.len() <= max_bytes {
-        return text;
-    }
-    let mut end = max_bytes;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    &text[..end]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,12 +98,5 @@ mod tests {
         let text = render(&unbounded);
         assert!(text.contains("无上限"));
         assert!(text.contains("以上为截断后的开头"));
-    }
-
-    #[test]
-    fn truncate_never_splits_a_character() {
-        assert_eq!(truncate_to_char_boundary("你好 world", 4), "你");
-        assert_eq!(truncate_to_char_boundary("你好", 100), "你好");
-        assert_eq!(truncate_to_char_boundary("你好", 0), "");
     }
 }

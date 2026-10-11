@@ -11,7 +11,7 @@ use std::{
     time::SystemTime,
 };
 
-use astrcode_extension_sdk::hostpaths;
+use astrcode_extension_sdk::{hostpaths, text::truncate_bytes_head};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
@@ -596,10 +596,7 @@ impl MemoryStore {
 
             if score > 0.0 {
                 let truncated = if content.len() > max_chars_per_file {
-                    format!(
-                        "{}…",
-                        truncate_to_char_boundary(content, max_chars_per_file)
-                    )
+                    format!("{}…", truncate_bytes_head(content, max_chars_per_file))
                 } else {
                     content.clone()
                 };
@@ -754,18 +751,6 @@ fn sanitize_content(content: &str) -> String {
         .to_string()
 }
 
-pub(crate) fn truncate_to_char_boundary(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes {
-        return s;
-    }
-
-    let mut end = max_bytes;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
-}
-
 /// 判断关键词是否像代码实体（路径、扩展名、CamelCase）。
 fn is_code_entity(kw: &str) -> bool {
     kw.contains('/') || kw.contains('\\') || kw.contains('.') || kw.chars().any(char::is_uppercase)
@@ -872,13 +857,10 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use super::{
-        MEMORY_FILE, MemoryStore, MemoryStorePool, MemoryStoreScope, StoreKey,
-        truncate_to_char_boundary,
-    };
+    use super::{MEMORY_FILE, MemoryStore, MemoryStorePool, MemoryStoreScope, StoreKey};
 
     #[test]
-    fn scope_normalizes_categories_and_truncation_preserves_utf8() {
+    fn scope_normalizes_invalid_categories() {
         assert_eq!(
             MemoryStoreScope::User.normalize_category("invalid"),
             "user_pref"
@@ -891,7 +873,6 @@ mod tests {
             MemoryStoreScope::Project.normalize_category("decision"),
             "decision"
         );
-        assert_eq!(truncate_to_char_boundary("你好 world", 4), "你");
     }
 
     #[test]

@@ -10,7 +10,10 @@ use std::{
     process::Output,
 };
 
-use astrcode_core::hostpaths::is_path_within;
+use astrcode_core::{
+    hostpaths::is_path_within,
+    text::{ceil_char_boundary, floor_char_boundary},
+};
 use astrcode_protocol::http::{
     FileChangeStateDto, FileContentResponseDto, FileDiffResponseDto, FileEntryDto,
     FileSearchFileDto, FileSearchMatchDto, FileSearchResponseDto, FileTreeResponseDto,
@@ -450,24 +453,6 @@ fn match_excerpt(line: &str, start: usize, end: usize) -> (String, usize) {
 fn without_line_terminator(line: &str) -> &str {
     let line = line.strip_suffix('\n').unwrap_or(line);
     line.strip_suffix('\r').unwrap_or(line)
-}
-
-/// 不大于 `index` 的最大字符边界；窗口两端都按字符边界收，切在多字节字符中间会 panic。
-fn floor_char_boundary(text: &str, index: usize) -> usize {
-    let mut index = index.min(text.len());
-    while !text.is_char_boundary(index) {
-        index -= 1;
-    }
-    index
-}
-
-/// 不小于 `index` 的最小字符边界。
-fn ceil_char_boundary(text: &str, index: usize) -> usize {
-    let mut index = index.min(text.len());
-    while !text.is_char_boundary(index) {
-        index += 1;
-    }
-    index
 }
 
 /// 清单取不到时的响应：没有条目，原因由 `availability` 表达。

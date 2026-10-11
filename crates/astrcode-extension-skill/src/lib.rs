@@ -22,6 +22,7 @@ use astrcode_extension_sdk::{
         PromptContributions, Registrar, ToolContext, ToolHandler, ToolPlanContext,
     },
     frontmatter, hostpaths,
+    text::truncate_chars_with_marker,
     tool::{
         ResourceAccess, ToolDefinition, ToolOrigin, ToolPlan, ToolPromptMetadata, ToolPromptTag,
         ToolResult, tool_metadata,
@@ -164,8 +165,11 @@ impl CommandDiscoveryHandler for SkillCommandDiscovery {
             .get_or_discover(&working_dir)
             .into_iter()
             .map(|skill| {
-                let description =
-                    truncate_for_index(&skill.index_description(), MAX_DESCRIPTION_CHARS);
+                let description = truncate_chars_with_marker(
+                    &skill.index_description(),
+                    MAX_DESCRIPTION_CHARS,
+                    INDEX_TRUNCATION_MARKER,
+                );
                 let cmd = astrcode_extension_sdk::extension::SlashCommand {
                     name: skill.id.clone(),
                     description,
@@ -501,7 +505,9 @@ fn extract_description_from_markdown(markdown: &str) -> Option<String> {
         .find(|line| !line.is_empty())
         .map(|line| line.trim_start_matches('#').trim())
         .filter(|line| !line.is_empty())
-        .map(|line| truncate_for_index(line, MAX_DESCRIPTION_CHARS))
+        .map(|line| {
+            truncate_chars_with_marker(line, MAX_DESCRIPTION_CHARS, INDEX_TRUNCATION_MARKER)
+        })
 }
 
 fn collect_asset_files(skill_dir: &Path) -> Vec<String> {
@@ -563,7 +569,11 @@ fn format_skills_for_model(skills: &[SkillDefinition]) -> String {
             .filter(|name| *name != skill.id)
             .map(|name| format!(" ({name})"))
             .unwrap_or_default();
-        let description = truncate_for_index(&skill.index_description(), MAX_DESCRIPTION_CHARS);
+        let description = truncate_chars_with_marker(
+            &skill.index_description(),
+            MAX_DESCRIPTION_CHARS,
+            INDEX_TRUNCATION_MARKER,
+        );
         let line = format!("- {}{}: {}\n", skill.id, display, description);
         if output.len() + line.len() > MAX_INDEX_CHARS {
             output.push_str("- ... additional skills omitted from the index\n");
@@ -637,13 +647,8 @@ fn is_valid_skill_id(id: &str) -> bool {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == &b'-')
 }
 
-fn truncate_for_index(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let keep = max_chars.saturating_sub(3);
-    format!("{}...", text.chars().take(keep).collect::<String>())
-}
+/// 索引描述被截断时追加的标记；字符数计入 `MAX_DESCRIPTION_CHARS`。
+const INDEX_TRUNCATION_MARKER: &str = "...";
 
 #[cfg(test)]
 mod tests {

@@ -14,6 +14,7 @@
 //! - [`types`]：核心共享标识符和数据类型
 //! - [`hostpaths`] / [`shell`] / [`frontmatter`] / [`discovery`]：跨扩展与宿主共用的工具原语 （原居
 //!   `astrcode-extension-sdk`，SDK 保留 re-export）
+//! - [`text`]：跨扩展与宿主共用的文本截断原语（预算单位写进函数名，SDK 保留 re-export）
 //!
 //! # 导入约定
 //!
@@ -30,6 +31,7 @@ pub mod llm;
 pub mod message_attachment;
 pub mod permission;
 pub mod shell;
+pub mod text;
 pub mod tool;
 pub mod types;
 pub mod user_input;

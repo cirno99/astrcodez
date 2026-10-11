@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use astrcode_core::config::defaults::astrcode_dir;
+use astrcode_core::{config::defaults::astrcode_dir, text::truncate_bytes_head};
 
 use super::PromptFiles;
 
@@ -44,7 +44,7 @@ fn load_identity(path: &Path) -> Option<String> {
     }
 
     let identity = if trimmed.len() > MAX_IDENTITY_SIZE {
-        truncate_to_char_boundary(trimmed, MAX_IDENTITY_SIZE)
+        truncate_bytes_head(trimmed, MAX_IDENTITY_SIZE)
     } else {
         trimmed
     };
@@ -91,16 +91,4 @@ fn load_project_rules(working_dir: &Path) -> Option<String> {
         }
     }
     Some(content)
-}
-
-fn truncate_to_char_boundary(text: &str, max_bytes: usize) -> &str {
-    if text.len() <= max_bytes {
-        return text;
-    }
-
-    let mut end = max_bytes;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    &text[..end]
 }

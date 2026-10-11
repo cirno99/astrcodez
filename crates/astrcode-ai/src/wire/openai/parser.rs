@@ -5,11 +5,12 @@ use std::collections::BTreeMap;
 use astrcode_core::{
     config::OpenAiApiMode,
     llm::{LlmEvent, LlmTokenUsage, LlmTokenUsageSource},
+    text::truncate_bytes_head,
 };
 use tokio::sync::mpsc;
 
 use crate::{
-    common::{DoneOnce, TextDeltaAccumulator, send_event, token_usage_has_value, utf8_prefix},
+    common::{DoneOnce, TextDeltaAccumulator, send_event, token_usage_has_value},
     stream_decoder::clean_json_fragment,
     wire::is_transient_stream_error,
 };
@@ -542,7 +543,7 @@ fn process_sse_data(
         "Failed to parse {} SSE data: {} bytes, preview: {:?}",
         api_mode_name,
         data.len(),
-        utf8_prefix(data, 80)
+        truncate_bytes_head(data, 80)
     );
 }
 

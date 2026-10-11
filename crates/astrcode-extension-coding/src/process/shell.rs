@@ -14,6 +14,7 @@ use astrcode_extension_sdk::{
         HostProcessStartRequest, HostProcessState, HostProcessTargetRequest,
     },
     shell::{ShellFamily, ShellInfo, resolve_shell},
+    text::ceil_char_boundary,
     tool::{ToolDefinition, ToolExecutionResult, ToolOrigin, ToolPlan, ToolResult},
 };
 use serde::Deserialize;
@@ -63,10 +64,10 @@ impl BoundedOutput {
             return;
         }
 
-        let mut discard = self.content.len() - MAX_FOREGROUND_OUTPUT_BYTES;
-        while !self.content.is_char_boundary(discard) {
-            discard += 1;
-        }
+        let discard = ceil_char_boundary(
+            &self.content,
+            self.content.len() - MAX_FOREGROUND_OUTPUT_BYTES,
+        );
         self.content.drain(..discard);
         self.dropped_bytes = self.dropped_bytes.saturating_add(discard);
     }

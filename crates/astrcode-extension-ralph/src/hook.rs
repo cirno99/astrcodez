@@ -11,6 +11,7 @@ use astrcode_extension_sdk::{
         ExtensionError, HookResult, LifecycleContext, LifecycleHandler, PostToolUseContext,
         PostToolUseHandler, PostToolUseResult,
     },
+    text::truncate_bytes_head,
     wire::host::{HostSessionInputRequest, HostWorkspaceReadOutput, HostWorkspaceReadRequest},
 };
 
@@ -77,7 +78,7 @@ async fn read_task_file(call: &impl ExtensionCall, path: &str) -> Result<(String
     };
     let truncated = content.len() > MAX_TASK_FILE_BYTES;
     Ok((
-        prompt::truncate_to_char_boundary(&content, MAX_TASK_FILE_BYTES).to_owned(),
+        truncate_bytes_head(&content, MAX_TASK_FILE_BYTES).to_owned(),
         truncated,
     ))
 }
